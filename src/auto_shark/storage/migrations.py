@@ -294,4 +294,24 @@ MIGRATIONS = (
 
     CREATE INDEX idx_form_field_name ON form_field(name);
     """,
+    """
+    CREATE TABLE body_task (
+        id INTEGER PRIMARY KEY,
+        task_id TEXT NOT NULL UNIQUE,
+        protocol_message_id INTEGER NOT NULL
+            REFERENCES protocol_message(id) ON DELETE CASCADE,
+        selection_reason TEXT NOT NULL,
+        priority INTEGER NOT NULL,
+        max_bytes INTEGER NOT NULL CHECK (max_bytes > 0),
+        status TEXT NOT NULL CHECK (
+            status IN ('pending', 'running', 'completed', 'skipped-budget', 'failed')
+        ),
+        extracted_bytes INTEGER CHECK (extracted_bytes IS NULL OR extracted_bytes >= 0),
+        error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+
+    CREATE INDEX idx_body_task_status ON body_task(status, priority DESC, id);
+    """,
 )

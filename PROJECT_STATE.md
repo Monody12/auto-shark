@@ -45,6 +45,10 @@ Status: active. M0 and M1 exit criteria are complete.
   conservative Base64/Base64URL/hex recognition, bounded transform budgets,
   streaming known-flag search with chunk overlap, exact match evidence,
   candidate ranking/deduplication, and idempotent `scan` CLI.
+- M2 slice 4 added SQLite schema 5, persistent body tasks, URI-scoped automatic
+  request/response selection, per-body and total extraction budgets, explicit
+  completed/failed/skipped states, one-time capability reuse, and the combined
+  `analyze --with-bodies --scan` workflow.
 
 ## Verification at this checkpoint
 
@@ -56,7 +60,7 @@ Environment paths below are local evidence, not production defaults:
 - `uv run pytest --cov=auto_shark --cov-report=term-missing`: 14 passed,
   total coverage 68 percent on Windows Python 3.11.15.
 - Separate environment `...\venvs\py39`; `uv sync --python 3.9 --all-groups`
-  and `uv run pytest -q`: 42 passed on CPython 3.9.25 after M2 slice 3.
+  and `uv run pytest -q`: 45 passed on CPython 3.9.25 after M2 slice 4.
 - `auto-shark probe --tshark <portable 4.6.7>`: usable; HTTP, HTTP export,
   TCP reassembly, FTP, FTP-DATA export, Telnet, and multipart all available.
 - A real `networking.pcap` project was created and reopened under
@@ -110,6 +114,18 @@ Environment paths below are local evidence, not production defaults:
   frame 233 without access to the answer oracle. Its `flag-match` evidence is
   frame 233, body offset 164,076, length 38, parent blob SHA-256
   `42a40528f6d4ad94653f4ff0e798b41184e5c79938c5a57942ae3e0915a36073`.
+- After M2 slice 4, Ruff passed; Python 3.11 reported 45 passed with 69
+  percent total coverage. Workflow orchestration is additionally covered by
+  the following real end-to-end runs.
+- One command on a new `菜刀666` schema 5 project selected all request/response
+  members for the 19 `/upload/1.php` transactions: 38 selected, 38 completed,
+  0 failed, 0 skipped, 228,842 extracted bytes. Database `body_task` and
+  `http_body` both report the same 38/228,842 totals; all bodies were complete,
+  all tool runs completed, the jobs directory was empty, and ZIP magic in frame
+  1367 was preserved at body offset 3.
+- A separate 100-byte total-budget run selected the same 38 messages, completed
+  1 with exactly 100 extracted bytes, and persisted 37 `skipped-budget` tasks.
+  No selected message was silently omitted.
 - Parent repository status after migration no longer lists `auto-shark/` and
   retains the pre-existing `.idea`, archive cache, and `pyshark/` changes.
 
@@ -145,6 +161,10 @@ Environment paths below are local evidence, not production defaults:
 - Both URL-form decoding and second-layer Base64/hex output count against the
   configured per-output and total transform byte budgets. Over-budget raw field
   slices remain evidence, but no decoded blob or transform is created.
+- Automatic body selection follows persisted transaction membership rather
+  than guessing stream order. Detailed per-body results live in SQLite; CLI
+  workflow JSON returns counts by default and includes paths/details only with
+  `--verbose-bodies`.
 
 ## Risks and constraints
 
@@ -158,8 +178,8 @@ Environment paths below are local evidence, not production defaults:
 
 ## Next executable step
 
-Implement M2 slice 4: automatic bounded body selection/extraction for indexed
-HTTP transactions plus TCP stream reconstruction evidence. Add protocol-aware
-body priority, total extraction budget, progress/failure persistence, and a
-single `analyze --with-bodies --scan` workflow. Validate all 19 WebShell target
-transactions and preserve the ZIP-bearing response without manual frame lists.
+Implement M2 slice 5: file magic/carving and bounded TCP stream reconstruction.
+Scan body/transform blobs for embedded file signatures at nonzero offsets,
+validate structural ends and trailing data, create artifact records without
+executing content, and expose transaction/stream evidence queries. Validate
+the embedded ZIP at frame 1367 and JPEG/trailing flag at frame 233.

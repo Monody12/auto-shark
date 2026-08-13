@@ -13,7 +13,7 @@ from uuid import uuid4
 
 from .core.ids import EvidenceLocator, evidence_id
 from .engines.hexstream import run_hex_to_file
-from .engines.tshark import probe_tshark
+from .engines.tshark import TsharkCapabilities, probe_tshark
 from .project import inspect_project
 from .storage import BlobStore, Database
 
@@ -80,6 +80,7 @@ def extract_http_body(
     tshark: Path,
     *,
     max_body_bytes: int,
+    capabilities: Optional[TsharkCapabilities] = None,
 ) -> BodyExtractionSummary:
     if frame_number <= 0:
         raise ValueError("frame number must be positive")
@@ -88,7 +89,7 @@ def extract_http_body(
     project = inspect_project(project_path)
     database = Database(project.root / "project.sqlite")
     database.initialize()
-    capabilities = probe_tshark(tshark)
+    capabilities = capabilities or probe_tshark(tshark)
     if not capabilities.usable or not capabilities.features.get("http", False):
         raise ValueError("TShark lacks required HTTP body capability")
     with database.connect() as connection:

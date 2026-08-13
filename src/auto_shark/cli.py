@@ -17,6 +17,7 @@ from .engines.tshark import find_tshark, probe_tshark
 from .pipeline import scan_project
 from .project import create_project, inspect_project
 from .version import __version__
+from .workflow import analyze_with_bodies
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -32,6 +33,11 @@ def _parser() -> argparse.ArgumentParser:
     analyze.add_argument("--project", required=True, type=Path)
     analyze.add_argument("--tshark", type=Path, help="explicit path to tshark executable")
     analyze.add_argument("--uri", help="also count transactions with this exact request URI")
+    analyze.add_argument("--with-bodies", action="store_true")
+    analyze.add_argument("--scan", action="store_true", help="scan bodies after extraction")
+    analyze.add_argument("--max-body-bytes", type=int, default=16 * 1024 * 1024)
+    analyze.add_argument("--max-body-total", type=int, default=64 * 1024 * 1024)
+    analyze.add_argument("--verbose-bodies", action="store_true")
 
     extract = commands.add_parser("extract-body", help="extract one indexed HTTP body")
     extract.add_argument("project", type=Path)
@@ -117,14 +123,29 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     file=sys.stderr,
                 )
                 return 2
-            print(
-                analyze_http(
+            if args.scan and not args.with_bodies:
+                raise ValueError("--scan requires --with-bodies")
+            if args.with_bodies:
+                result = analyze_with_bodies(
+                    args.capture,
+                    args.project,
+                    executable,
+                    uri=args.uri,
+                    max_body_bytes=args.max_body_bytes,
+                    max_total_bytes=args.max_body_total,
+                    run_scan=args.scan,
+                )
+            else:
+                result = analyze_http(
                     args.capture,
                     args.project,
                     executable,
                     matching_uri=args.uri,
-                ).to_json()
-            )
+                )
+            if args.with_bodies:
+                print(result.to_json(verbose_bodies=args.verbose_bodies))
+            else:
+                print(result.to_json())
             return 0
         if args.command == "probe":
             settings = Settings.from_environment()

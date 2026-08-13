@@ -40,7 +40,17 @@ uv run auto-shark scan `
 
 The scanner currently handles raw known-format flags and complete URL forms,
 then one conservative Base64/Base64URL/hex layer. Automatic body selection and
-broader unknown-format triage are still active M2 work.
+scanning can run as one command:
+
+```powershell
+uv run auto-shark analyze capture.pcapng `
+  --project "$env:LOCALAPPDATA\AutoShark\projects\capture.auto-shark" `
+  --tshark C:\path\to\tshark.exe --uri /upload/1.php `
+  --with-bodies --scan --max-body-total 67108864
+```
+
+Per-message task status is persisted, including explicit budget skips. TCP
+reconstruction, file carving, and broader unknown-format triage remain active.
 
 ## Product boundaries
 
