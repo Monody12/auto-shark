@@ -314,4 +314,51 @@ MIGRATIONS = (
 
     CREATE INDEX idx_body_task_status ON body_task(status, priority DESC, id);
     """,
+    """
+    CREATE TABLE artifact_evidence (
+        artifact_id INTEGER NOT NULL REFERENCES artifact(id) ON DELETE CASCADE,
+        evidence_id INTEGER NOT NULL REFERENCES evidence(id) ON DELETE CASCADE,
+        role TEXT NOT NULL,
+        PRIMARY KEY (artifact_id, evidence_id, role)
+    ) WITHOUT ROWID;
+
+    CREATE TABLE file_scan (
+        id INTEGER PRIMARY KEY,
+        scan_id TEXT NOT NULL UNIQUE,
+        parent_evidence_id INTEGER NOT NULL REFERENCES evidence(id) ON DELETE CASCADE,
+        scanned_bytes INTEGER NOT NULL CHECK (scanned_bytes >= 0),
+        parent_bytes INTEGER NOT NULL CHECK (parent_bytes >= 0),
+        max_scan_bytes INTEGER NOT NULL CHECK (max_scan_bytes > 0),
+        max_artifact_bytes INTEGER NOT NULL CHECK (max_artifact_bytes > 0),
+        max_candidates INTEGER NOT NULL CHECK (max_candidates > 0),
+        candidate_count INTEGER NOT NULL CHECK (candidate_count >= 0),
+        status TEXT NOT NULL CHECK (
+            status IN ('complete', 'scan-truncated', 'candidate-limit')
+        ),
+        updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE file_carve (
+        id INTEGER PRIMARY KEY,
+        carve_id TEXT NOT NULL UNIQUE,
+        parent_evidence_id INTEGER NOT NULL REFERENCES evidence(id) ON DELETE CASCADE,
+        carved_evidence_id INTEGER NOT NULL REFERENCES evidence(id) ON DELETE CASCADE,
+        artifact_id INTEGER NOT NULL REFERENCES artifact(id) ON DELETE CASCADE,
+        prefix_evidence_id INTEGER REFERENCES evidence(id) ON DELETE SET NULL,
+        trailing_evidence_id INTEGER REFERENCES evidence(id) ON DELETE SET NULL,
+        format TEXT NOT NULL,
+        start_offset INTEGER NOT NULL CHECK (start_offset >= 0),
+        byte_length INTEGER NOT NULL CHECK (byte_length > 0),
+        structural_status TEXT NOT NULL CHECK (
+            structural_status IN (
+                'validated', 'signature-only', 'scan-truncated', 'artifact-truncated'
+            )
+        ),
+        validation_detail TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    );
+
+    CREATE UNIQUE INDEX idx_file_scan_parent ON file_scan(parent_evidence_id);
+    CREATE INDEX idx_file_carve_parent ON file_carve(parent_evidence_id, start_offset);
+    """,
 )

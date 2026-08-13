@@ -14,6 +14,7 @@ from .analysis import analyze_http
 from .body import extract_http_body
 from .config import Settings
 from .engines.tshark import find_tshark, probe_tshark
+from .files.carve import carve_project
 from .pipeline import scan_project
 from .project import create_project, inspect_project
 from .version import __version__
@@ -50,6 +51,16 @@ def _parser() -> argparse.ArgumentParser:
     scan.add_argument("--max-transform-bytes", type=int, default=16 * 1024 * 1024)
     scan.add_argument("--max-transform-total", type=int, default=64 * 1024 * 1024)
     scan.add_argument("--max-form-bytes", type=int, default=16 * 1024 * 1024)
+    scan.add_argument("--with-files", action="store_true", help="also carve static files")
+    scan.add_argument("--max-file-scan-bytes", type=int, default=64 * 1024 * 1024)
+    scan.add_argument("--max-file-artifact-bytes", type=int, default=64 * 1024 * 1024)
+
+    carve = commands.add_parser("carve", help="identify and persist static file artifacts")
+    carve.add_argument("project", type=Path)
+    carve.add_argument("--max-scan-bytes", type=int, default=64 * 1024 * 1024)
+    carve.add_argument("--max-artifact-bytes", type=int, default=64 * 1024 * 1024)
+    carve.add_argument("--max-candidates", type=int, default=128)
+    carve.add_argument("--window-bytes", type=int, default=1024 * 1024)
 
     probe = commands.add_parser("probe", help="probe TShark capabilities")
     probe.add_argument("--tshark", type=Path, help="explicit path to tshark executable")
@@ -86,6 +97,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         parser.print_help()
         return 0
     try:
+        if args.command == "carve":
+            print(
+                carve_project(
+                    args.project,
+                    max_scan_bytes=args.max_scan_bytes,
+                    max_artifact_bytes=args.max_artifact_bytes,
+                    max_candidates_per_evidence=args.max_candidates,
+                    window_bytes=args.window_bytes,
+                ).to_json()
+            )
+            return 0
         if args.command == "scan":
             print(
                 scan_project(
@@ -93,6 +115,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     max_transform_output_bytes=args.max_transform_bytes,
                     max_transform_total_bytes=args.max_transform_total,
                     max_form_input_bytes=args.max_form_bytes,
+                    with_files=args.with_files,
+                    max_file_scan_bytes=args.max_file_scan_bytes,
+                    max_file_artifact_bytes=args.max_file_artifact_bytes,
                 ).to_json()
             )
             return 0

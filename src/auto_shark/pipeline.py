@@ -23,6 +23,8 @@ class ScanSummary:
     transforms: int
     candidates: int
     candidate_values: tuple[str, ...]
+    carved_files: int
+    artifacts: int
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=False, sort_keys=True, indent=2)
@@ -235,6 +237,9 @@ def scan_project(
     max_transform_output_bytes: int = 16 * 1024 * 1024,
     max_transform_total_bytes: int = 64 * 1024 * 1024,
     max_form_input_bytes: int = 16 * 1024 * 1024,
+    with_files: bool = False,
+    max_file_scan_bytes: int = 64 * 1024 * 1024,
+    max_file_artifact_bytes: int = 64 * 1024 * 1024,
 ) -> ScanSummary:
     if (
         max_transform_output_bytes <= 0
@@ -415,6 +420,18 @@ def scan_project(
                 "SELECT normalized_value FROM candidate ORDER BY rank_score DESC, id"
             )
         )
+    carved_files = 0
+    artifacts = 0
+    if with_files:
+        from .files.carve import carve_project
+
+        carve = carve_project(
+            project.root,
+            max_scan_bytes=max_file_scan_bytes,
+            max_artifact_bytes=max_file_artifact_bytes,
+        )
+        carved_files = carve.carved_files
+        artifacts = carve.unique_artifacts
     return ScanSummary(
         project=str(project.root),
         bodies_scanned=len(bodies),
@@ -422,4 +439,6 @@ def scan_project(
         transforms=transform_count,
         candidates=len(candidates),
         candidate_values=candidates,
+        carved_files=carved_files,
+        artifacts=artifacts,
     )

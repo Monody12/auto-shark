@@ -38,8 +38,8 @@ all exit criteria are verified and recorded in `PROJECT_STATE.md`.
 - FTP control/PASV/data correlation and static export.
 - Directional Telnet dialogue reconstruction.
 - File magic, declared/actual type mismatch, structural end, trailing-data scan.
-  Status: reusable bounded carving is being implemented during M2 slice 5 to
-  validate current HTTP evidence; general protocol/file analysis remains M3.
+  Status: reusable bounded carving is complete for HTTP/transform evidence;
+  general protocol correlation, type mismatch, and manual triage remain M3.
 - Protocol/conversation summary and manual-analysis queue.
 
 ## M4 - CTF detectors and CLI acceptance (pending, estimate 4 days)

@@ -38,3 +38,18 @@ def test_schema_one_database_migrates_to_current(tmp_path) -> None:
     with database.connect() as connection:
         assert connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
     assert {"http_message", "transaction_message"}.issubset(set(database.table_names()))
+
+
+def test_schema_five_database_migrates_to_file_carving_schema(tmp_path) -> None:
+    path = tmp_path / "schema-five.sqlite"
+    database = Database(path)
+    with database.connect() as connection:
+        for script in MIGRATIONS[:5]:
+            connection.executescript(script)
+        connection.execute(f"PRAGMA application_id = {APPLICATION_ID}")
+        connection.execute("PRAGMA user_version = 5")
+    database.initialize()
+    with database.connect() as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+    assert {"file_scan", "file_carve", "artifact_evidence"}.issubset(set(database.table_names()))

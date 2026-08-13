@@ -53,6 +53,12 @@ contract, revalidated sample facts, and verification gates are recorded in
   request/response selection, per-body and total extraction budgets, explicit
   completed/failed/skipped states, one-time capability reuse, and the combined
   `analyze --with-bodies --scan` workflow.
+- M2 slice 5A added SQLite schema 6, fixed-window file signature scanning,
+  bounded artifact carving, structural PNG/JPEG/ZIP/PDF validation, conservative
+  RAR/GZIP/PE recognition, explicit scan/artifact truncation states, prefix and
+  trailing range evidence, artifact content deduplication, and multi-source
+  artifact provenance. `scan --with-files` is explicit; ordinary `scan` keeps
+  its previous cost and behavior.
 
 ## Verification at this checkpoint
 
@@ -143,6 +149,27 @@ Environment paths below are local evidence, not production defaults:
   not be opened. It also confirmed the FTP RAR hash, seven HTTP-form capture
   retransmissions, four one-byte conflicting overlaps in target stream 2, and
   three identical 1,380-byte retransmissions in WebShell stream 0.
+- After M2 slice 5A, `uv run ruff check .` passed. Python 3.11.15 reported 58
+  tests passed with 71 percent total coverage; Python 3.9.25 reported the same
+  58 tests passed. Tests cover schema 5-to-6 migration, idempotent duplicate
+  provenance, window-boundary signatures, ZIP comments and large trailing
+  regions, JPEG stuffed bytes/false EOI, PNG CRC, truncation states, and a
+  128 MiB sparse input constrained to a 4 KiB scan budget.
+- Real schema 6 carving of `m2-sniffed-scan.auto-shark` produced one validated
+  artifact: frame 233 JPEG offset 138, length 163,938, SHA-256
+  `d8e9ba607bde8bccb1bf812e7d0d354abf41a57c0461e6b59c1fa9d5dcc58888`,
+  prefix length 138, and trailing range offset 164,076 length 85.
+- Real schema 6 carving of `m2-caidao-workflow.auto-shark` scanned 133 eligible
+  body/transform evidence records and produced two validated artifacts:
+  frame 1068 transform-output JPEG offset 0, length 102,226, SHA-256
+  `a7b43078200c11f3e6eeb7ef6693db27d703460df75fd220c4e05f4a20ac50fa`;
+  and frame 1367 ZIP offset 3, length 224, SHA-256
+  `7484bdeddf429bfa7da36da7d522115d7156c46f4280cc2f45dcdf679f640c20`,
+  with three-byte prefix and trailing ranges.
+- Repeated real carving reported zero new artifacts and stable counts. The
+  multipart project remained 1/1/1/1 for file_scan/file_carve/artifact/link;
+  the WebShell project remained 133/2/2/2. Both databases pass
+  `PRAGMA foreign_key_check`; both runtime `jobs` directories remain empty.
 
 ## Active decisions
 
@@ -193,8 +220,9 @@ Environment paths below are local evidence, not production defaults:
 
 ## Next executable step
 
-Complete the first approved M2 slice 5 sub-slice: replace the unverified file
-carving draft with the bounded parser and schema contract in
-`docs/M2_SLICE5_IMPLEMENTATION.md`. Run migration/unit tests, frame 233 and 1367
-real smoke tests, idempotency checks, Python 3.11 coverage, and Python 3.9 tests;
-then update this checkpoint before beginning TCP reconstruction.
+Implement M2 slice 5B from `docs/M2_SLICE5_IMPLEMENTATION.md`: schema 7 TCP
+segment provenance and per-direction sequence reconstruction. Stream available
+TShark fields, deduplicate exact retransmissions, persist conflicting overlaps
+and gaps, enforce per-direction/total budgets, map output ranges to contributing
+frames, and validate HTTP-form stream 2 plus WebShell stream 0 before updating
+this checkpoint again.

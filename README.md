@@ -10,7 +10,9 @@ flag candidates, reconstructs HTTP/TCP/FTP/Telnet evidence, and exports an
 offline report without executing captured content.
 
 The current runnable checkpoint can probe TShark, create/reopen a machine-local
-project, and persist/precisely pair HTTP-over-TCP metadata:
+project, persist and precisely pair HTTP-over-TCP metadata, extract bounded
+bodies, apply bounded transforms, rank known-format candidates, and carve
+static file evidence without executing or unpacking it:
 
 ```powershell
 uv run auto-shark probe --tshark C:\path\to\tshark.exe
@@ -19,8 +21,8 @@ uv run auto-shark analyze capture.pcapng `
   --tshark C:\path\to\tshark.exe
 ```
 
-Body extraction, decoding, candidate ranking, and reports are still active M2+
-work; consult `PROJECT_STATE.md` rather than assuming they are implemented.
+TCP reconstruction, broader triage, and reports remain active M2+ work; consult
+`PROJECT_STATE.md` for the exact tested checkpoint.
 
 One indexed HTTP body can currently be extracted with a hard decoded-byte cap:
 
@@ -50,7 +52,23 @@ uv run auto-shark analyze capture.pcapng `
 ```
 
 Per-message task status is persisted, including explicit budget skips. TCP
-reconstruction, file carving, and broader unknown-format triage remain active.
+reconstruction and broader unknown-format triage remain active.
+
+Static file carving is an explicit bounded operation. Ordinary `scan` does not
+silently add its cost; use either command below:
+
+```powershell
+uv run auto-shark carve `
+  "$env:LOCALAPPDATA\AutoShark\projects\capture.auto-shark" `
+  --max-scan-bytes 67108864 --max-artifact-bytes 67108864
+
+uv run auto-shark scan `
+  "$env:LOCALAPPDATA\AutoShark\projects\capture.auto-shark" --with-files
+```
+
+Validated files, signature-only artifacts, prefixes, and trailing ranges retain
+exact parent evidence. Archives, compressed data, images, and executables are
+not opened, decrypted, unpacked, rendered, or executed by the carving layer.
 
 ## Product boundaries
 
