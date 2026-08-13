@@ -13,13 +13,21 @@ candidate ranking, static file analysis, and constrained optional Linux jobs.
 
 ## Current milestone
 
-M2 - streaming TShark ingestion, HTTP/TCP reconstruction, and search pipeline.
+M3 - FTP, Telnet, files, and protocol/manual triage.
 
-Status: active. M0 and M1 exit criteria are complete.
+Status: active. M0, M1, and M2 exit criteria are complete.
 
 The user approved the detailed M2 slice 5 implementation plan. Its durable
 contract, revalidated sample facts, and verification gates are recorded in
 `docs/M2_SLICE5_IMPLEMENTATION.md`.
+
+M2 slice 6 is complete. Its stable query schemas, bounded triage rules, exact
+Telnet/HTTP-form acceptance criteria, and implementation order are recorded in
+`docs/M2_SLICE6_IMPLEMENTATION.md`.
+
+The user approved the corrected slice 6 plan after the remaining read-only
+sample inspection. Implementation is authorized, but every tested sub-slice
+must update this checkpoint before the next behavior slice starts.
 
 ## Completed checkpoint
 
@@ -210,6 +218,86 @@ Environment paths below are local evidence, not production defaults:
 - A separate real WebShell stream 0 run with a 100-byte index budget persisted
   all 289 payload segments as `payload-budget` skips, produced no fake blob,
   returned a `truncated` direction, and left no selected segment silent.
+- The final slice 6 read-only sample inspection reverified all five capture
+  hashes with TShark 4.6.7 without reading the adjacent answer file. Telnet
+  client stream 0 contains its frame 41 known-format value at reconstructed
+  output range `[82,120)`, length 38, with frame 41 as the sole primary source;
+  that slice hashes to
+  `a39095fe3a3f543d2e09d29fe191296700e3d6e0a64dfce52e101529ca78747b`.
+- HTTP request frame 20 pairs to response frame 26 through TShark's explicit
+  request reference. Its URL-form body is 65 bytes, SHA-256
+  `00a5ef097b7f875957d0145aa414bd976ebc8e7c33145200755eafe5b658117c`,
+  with ordered raw value ranges `email [6,10)`, `password [20,52)`, and
+  `captcha [61,65)`. The password is a 32-byte printable hexadecimal-shaped
+  value. Both inspected runtime databases pass foreign-key checks and have
+  empty `jobs` directories.
+- M2 slice 6 query sub-slice is implemented and focused verification passed:
+  `uv run ruff check .` succeeded and
+  `uv run pytest -q tests/test_queries.py tests/test_database.py` reported
+  8 passed. Coverage includes schema 7-to-8 migration, bounded pagination,
+  exact URI filtering, primary-source frame ranges, recorded frame-range audit
+  fields, and explicit stream conflict output.
+- Repeated real query calls returned byte-identical JSON. The 19 WebShell
+  `/upload/1.php` transactions use `auto-shark.transactions/v1` and hash to
+  `a5193dd4ee0a73a196f8370d80ac597a798b6843da7e5625bffe096eddac2385`;
+  the two Telnet directions use `auto-shark.streams/v1` and hash to
+  `779041d2ac31af1db743e5c19da76e34fe809206e7b843918bb97f562e73f4d7`.
+  The HTTP-form stream query exposes statuses `complete,conflicting` and four
+  conflicts. These real runtime projects were migrated to schema 8 by the
+  query command; captured blobs were not changed.
+- M2 slice 6 triage code and focused synthetic verification are implemented.
+  The 21-test search/triage/query/database/CLI group passes and covers current
+  evidence selection, historical TCP exclusion, TCP output-to-frame mapping,
+  artifact-local coordinates, form role ranking, placeholders, policy-keyed
+  idempotency, per-input/total/evidence/candidate budgets, explicit failures,
+  CLI limit forwarding, orphan transactions, and empty pages.
+- Windows Python 3.11.15 full regression passes: `uv run ruff check .` and
+  `uv run pytest --cov=auto_shark --cov-report=term-missing` reported 81 tests
+  passed with 81 percent total coverage.
+- The separate CPython 3.9.25 uv environment also passes all 81 tests. Both
+  supported core runtimes are green before any real schema 8 triage run.
+- Clean schema 8 Telnet acceptance passed in
+  `m2-slice6-telnet.auto-shark`. Reconstruction retained the verified 36
+  segments/310 payload bytes and both schema 7 output hashes. Two identical
+  triage runs selected/scanned two current directions and produced exactly one
+  candidate at rank 100. Its exact evidence is reconstructed range `[82,120)`,
+  length 38, frame 41-to-41, with `contributing_frames: [41]`. Stable row
+  counts are triage_scan/candidate/link/signal `2/1/1/1`; all 30 blobs rehash,
+  foreign-key violations are zero, and `jobs` is empty.
+- Clean schema 8 HTTP-form acceptance passed in
+  `m2-slice6-http-form.auto-shark`. Request frame 20 pairs to response 26; its
+  complete 65-byte body retains SHA-256
+  `00a5ef097b7f875957d0145aa414bd976ebc8e7c33145200755eafe5b658117c`.
+  Stream 2 exposes `complete,conflicting` directions and all four conflicts.
+  Seven current evidence inputs were scanned twice with stable results and no
+  known-format match. Ordered fields retain raw ranges `email [6,10)`,
+  `password [20,52)`, and `captcha [61,65)` plus all three URL transform links.
+  Password ranks 80 as `sensitive-field`; email/captcha rank 13 as context.
+  Stable row counts are `7/3/3/12`; all 28 blobs rehash, foreign-key violations
+  are zero, and `jobs` is empty.
+- Repeated schema 8 multipart regression selected two current inputs
+  (`http-body` and `file-carve`), scanned 328,099 bytes without limits/failures,
+  and retained exactly one known-format candidate. Its evidence remains frame
+  233, parent-body offset 164,076, length 38, over parent SHA-256
+  `42a40528f6d4ad94653f4ff0e798b41184e5c79938c5a57942ae3e0915a36073`;
+  the artifact blob was scanned in artifact-local coordinates and did not
+  duplicate or shift the match.
+- Repeated schema 8 WebShell regression selected/scanned all 135 current inputs:
+  38 HTTP bodies, 95 transform outputs, and two complete file carves, totaling
+  659,117 bytes. It produced zero candidates with no truncation, budget skip,
+  candidate limit, or failure. Multipart and WebShell results were identical
+  across repeat calls; all 2/46 blobs respectively rehash, both databases have
+  zero foreign-key violations, and both `jobs` directories are empty.
+- Every M2 roadmap exit item is now implemented and evidenced: streaming HTTP
+  metadata, precise pairing, bounded body/TCP reconstruction, bounded transform
+  search, stable queries, and explainable/idempotent candidate ranking. M2 is
+  complete; generic unstructured-token heuristics remain intentionally in M4.
+- Final verification after the query aggregation assertions remained green:
+  Ruff passed; Windows CPython 3.11.15 reported 81 tests and 81 percent total
+  coverage; CPython 3.9.25 reported the same 81 tests passed. All four schema 8
+  runtime databases above return `PRAGMA integrity_check=ok`, zero foreign-key
+  violations, and empty `jobs` directories. `uv build` produced the sdist and
+  wheel, and the wheel contains `queries.py`, `search.py`, and `triage.py`.
 
 ## Active decisions
 
@@ -234,9 +322,10 @@ Environment paths below are local evidence, not production defaults:
   generic `open(fd, ...)` produced `EINVAL` and is covered by the real smoke run.
 - Only complete URL-form bodies receive structured field transforms. Truncated
   bodies remain searchable raw evidence but are not parsed as complete forms.
-- High-confidence known-format search currently recognizes explicit `flag`,
-  `ctf`, `key`, and `answer` prefixes. Unknown-format triage remains a separate
-  detector so preceding printable bytes are not swallowed into a false value.
+- High-confidence known-format search recognizes explicit `flag`, `ctf`, `key`,
+  and `answer` prefixes. Structured authentication-field triage is a separate
+  detector so preceding printable bytes are not swallowed into a false value;
+  generic unstructured token heuristics remain M4 scope.
 - Candidate links point to `flag-match` evidence with exact byte offset/length,
   which in turn references the parent evidence/blob; they do not merely point
   at the whole body.
@@ -260,10 +349,7 @@ Environment paths below are local evidence, not production defaults:
 
 ## Next executable step
 
-Implement M2 slice 6: expose stable transaction/stream evidence queries and
-broader unknown-format triage/ranking over current body, transform, artifact,
-and reconstructed-stream evidence. Add query-focused CLI JSON contracts without
-duplicating stored bytes; validate that Telnet frame 41 and HTTP-form frame 20
-rank above background evidence while keeping raw provenance and explicit TCP
-conflict states. Update this checkpoint before starting FTP/Telnet protocol
-adapters in M3.
+Plan and contract the first M3 slice before implementation: capability-gated
+FTP control/PASV/data correlation and static export for frames 44/49/55 of the
+verified FTP sample. Preserve the 164-byte RAR hash/provenance and queue it for
+manual review without opening, decrypting, or unpacking it.

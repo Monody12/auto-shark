@@ -19,7 +19,7 @@ all exit criteria are verified and recorded in `PROJECT_STATE.md`.
 - Safe subprocess runner and structured TShark capability profile.
 - Project create/open/status CLI with machine-local path guardrails.
 
-## M2 - HTTP/TCP and search pipeline (active, estimate 5 days)
+## M2 - HTTP/TCP and search pipeline (complete, estimate 5 days)
 
 - Streaming TShark metadata ingestion and persisted tool-run provenance.
   Status: complete for HTTP-over-TCP metadata.
@@ -32,10 +32,11 @@ all exit criteria are verified and recorded in `PROJECT_STATE.md`.
 - Raw/text/field search plus URL, Base64/Base64URL, and hex lineage.
   Status: complete for extracted HTTP bodies and URL-form fields.
 - Explainable candidate normalization, ranking, and deduplication.
-  Status: known-format candidates complete; broader triage/ranking and stable
-  transaction/stream query surfaces remain.
+  Status: complete for known-format and structured authentication-field
+  triage, with stable bounded transaction/stream query surfaces and versioned
+  score signals. Generic unstructured unknown-token heuristics remain M4 scope.
 
-## M3 - FTP, Telnet, files, and unknown triage (pending, estimate 4 days)
+## M3 - FTP, Telnet, files, and unknown triage (active, estimate 4 days)
 
 - FTP control/PASV/data correlation and static export.
 - Directional Telnet dialogue reconstruction.

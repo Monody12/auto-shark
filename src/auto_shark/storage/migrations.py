@@ -461,4 +461,42 @@ MIGRATIONS = (
         ON tcp_segment(conversation_id,direction,sequence_relative,frame_number);
     CREATE INDEX idx_tcp_reconstruction_status ON tcp_reconstruction(status);
     """,
+    """
+    CREATE TABLE triage_scan (
+        id INTEGER PRIMARY KEY,
+        scan_id TEXT NOT NULL UNIQUE,
+        evidence_id INTEGER NOT NULL REFERENCES evidence(id) ON DELETE CASCADE,
+        detector TEXT NOT NULL,
+        detector_version TEXT NOT NULL,
+        policy_json TEXT NOT NULL,
+        max_bytes INTEGER NOT NULL CHECK (max_bytes > 0),
+        scanned_bytes INTEGER NOT NULL CHECK (scanned_bytes >= 0),
+        matches INTEGER NOT NULL CHECK (matches >= 0),
+        status TEXT NOT NULL CHECK (
+            status IN (
+                'complete','input-truncated','candidate-limit',
+                'skipped-budget','skipped-limit','failed'
+            )
+        ),
+        error TEXT,
+        updated_at TEXT NOT NULL,
+        UNIQUE (evidence_id,detector,detector_version,policy_json)
+    );
+
+    CREATE TABLE candidate_signal (
+        id INTEGER PRIMARY KEY,
+        signal_id TEXT NOT NULL UNIQUE,
+        candidate_id INTEGER NOT NULL REFERENCES candidate(id) ON DELETE CASCADE,
+        evidence_id INTEGER NOT NULL REFERENCES evidence(id) ON DELETE CASCADE,
+        detector TEXT NOT NULL,
+        detector_version TEXT NOT NULL,
+        signal_name TEXT NOT NULL,
+        contribution REAL NOT NULL,
+        detail_json TEXT NOT NULL,
+        UNIQUE (candidate_id,evidence_id,detector,detector_version,signal_name)
+    );
+
+    CREATE INDEX idx_triage_scan_status ON triage_scan(status,evidence_id);
+    CREATE INDEX idx_candidate_signal_candidate ON candidate_signal(candidate_id);
+    """,
 )

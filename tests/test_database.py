@@ -76,3 +76,20 @@ def test_schema_six_database_migrates_to_tcp_reconstruction_schema(tmp_path) -> 
         "tcp_gap",
         "tcp_overlap_conflict",
     }.issubset(set(database.table_names()))
+
+
+def test_schema_seven_database_migrates_to_triage_schema(tmp_path) -> None:
+    path = tmp_path / "schema-seven.sqlite"
+    database = Database(path)
+    with database.connect() as connection:
+        for script in MIGRATIONS[:7]:
+            connection.executescript(script)
+        connection.execute(f"PRAGMA application_id = {APPLICATION_ID}")
+        connection.execute("PRAGMA user_version = 7")
+    database.initialize()
+    with database.connect() as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+        scan_columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(triage_scan)")}
+    assert {"triage_scan", "candidate_signal"}.issubset(set(database.table_names()))
+    assert {"policy_json", "error"}.issubset(scan_columns)

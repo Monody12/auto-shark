@@ -11,8 +11,9 @@ offline report without executing captured content.
 
 The current runnable checkpoint can probe TShark, create/reopen a machine-local
 project, persist and precisely pair HTTP-over-TCP metadata, extract bounded
-bodies, apply bounded transforms, rank known-format candidates, and carve
-static file evidence without executing or unpacking it:
+bodies, reconstruct TCP directions, apply bounded transforms, query indexed
+transactions/streams, rank explainable triage candidates, and carve static file
+evidence without executing or unpacking it:
 
 ```powershell
 uv run auto-shark probe --tshark C:\path\to\tshark.exe
@@ -21,7 +22,7 @@ uv run auto-shark analyze capture.pcapng `
   --tshark C:\path\to\tshark.exe
 ```
 
-Broader triage, query surfaces, and reports remain active M2+ work; consult
+Reports and protocol-specific M3 adapters remain future work; consult
 `PROJECT_STATE.md` for the exact tested checkpoint.
 
 One indexed HTTP body can currently be extracted with a hard decoded-byte cap:
@@ -51,8 +52,32 @@ uv run auto-shark analyze capture.pcapng `
   --with-bodies --scan --max-body-total 67108864
 ```
 
-Per-message task status is persisted, including explicit budget skips. Broader
-unknown-format triage and stable query surfaces remain active.
+Per-message task status is persisted, including explicit budget skips.
+
+Indexed transactions and current reconstructed stream directions have stable,
+bounded JSON query surfaces that never inline blob bytes:
+
+```powershell
+uv run auto-shark transactions `
+  "$env:LOCALAPPDATA\AutoShark\projects\capture.auto-shark" `
+  --uri /upload/1.php --offset 0 --limit 100
+
+uv run auto-shark streams `
+  "$env:LOCALAPPDATA\AutoShark\projects\capture.auto-shark"
+```
+
+Current body, transform, carved artifact, and TCP reconstruction evidence can
+then be triaged under explicit byte/evidence/candidate budgets:
+
+```powershell
+uv run auto-shark triage `
+  "$env:LOCALAPPDATA\AutoShark\projects\capture.auto-shark" `
+  --max-evidence-bytes 67108864 --max-total-bytes 268435456
+```
+
+Triage records every completed, truncated, skipped, limited, or failed input.
+Known-format ranges retain exact byte provenance; structured authentication
+fields carry versioned score signals rather than answer-specific rules.
 
 One bidirectional TCP stream can be indexed and reconstructed with explicit
 segment and output budgets:
