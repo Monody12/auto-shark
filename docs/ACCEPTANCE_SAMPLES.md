@@ -41,11 +41,16 @@ target request frame 233 contains a 164,161-byte multipart body with form field
 
 The part starts at body offset 138. Its valid JPEG ends at EOI offset 164,074;
 the JPEG is 163,938 bytes with SHA-256
-`E5B8FDC2FE7083DB5DCC2926D3222C580F9C917B8A99C48DEA5B61BB61E34B98`.
+`D8E9BA607BDE8BCCB1BF812E7D0D354ABF41A57C0461E6B59C1FA9D5DCC58888`.
 Search and preserve the bytes after EOI before dispatching the image adapter.
 Rank the flag-like trailing text first. Response frame 260 is HTTP 500 but its
 HTML says `upload success`; report the status/body contradiction rather than
 silently classifying the upload as failed.
+
+The JPEG hash was independently revalidated on 2026-08-13 by locating the
+capture by its manifest SHA-256, exporting frame 233 `http.file_data` with
+TShark 4.6.7, and hashing byte range `[138, 164076)`. The formerly recorded
+`E5B8...4B98` value did not match the capture or common boundary variants.
 
 ### WebShell traffic
 
@@ -54,4 +59,3 @@ bounded URL/Base64 parameters, reconstruct a chronological deduplicated action
 timeline, retain the large request, preserve ZIP and PHP response artifacts,
 and either solve fully or produce a complete ordered nonduplicated next-action
 path. Each action must link to request/response frames and original bytes.
-

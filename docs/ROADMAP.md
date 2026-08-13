@@ -27,7 +27,7 @@ all exit criteria are verified and recorded in `PROJECT_STATE.md`.
   Status: complete, including unmatched/orphan/extra-response representation.
 - On-demand bounded body extraction and TCP reconstruction.
   Status: HTTP body extraction and automatic transaction scheduling complete;
-  TCP reconstruction remains pending.
+  TCP reconstruction is active under `docs/M2_SLICE5_IMPLEMENTATION.md`.
 - Raw/text/field search plus URL, Base64/Base64URL, and hex lineage.
   Status: complete for extracted HTTP bodies and URL-form fields.
 - Explainable candidate normalization, ranking, and deduplication.
@@ -38,6 +38,8 @@ all exit criteria are verified and recorded in `PROJECT_STATE.md`.
 - FTP control/PASV/data correlation and static export.
 - Directional Telnet dialogue reconstruction.
 - File magic, declared/actual type mismatch, structural end, trailing-data scan.
+  Status: reusable bounded carving is being implemented during M2 slice 5 to
+  validate current HTTP evidence; general protocol/file analysis remains M3.
 - Protocol/conversation summary and manual-analysis queue.
 
 ## M4 - CTF detectors and CLI acceptance (pending, estimate 4 days)

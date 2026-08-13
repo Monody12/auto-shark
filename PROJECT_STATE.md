@@ -17,6 +17,10 @@ M2 - streaming TShark ingestion, HTTP/TCP reconstruction, and search pipeline.
 
 Status: active. M0 and M1 exit criteria are complete.
 
+The user approved the detailed M2 slice 5 implementation plan. Its durable
+contract, revalidated sample facts, and verification gates are recorded in
+`docs/M2_SLICE5_IMPLEMENTATION.md`.
+
 ## Completed checkpoint
 
 - The project was moved out of the parent personal-script repository into the
@@ -128,6 +132,17 @@ Environment paths below are local evidence, not production defaults:
   No selected message was silently omitted.
 - Parent repository status after migration no longer lists `auto-shark/` and
   retains the pre-existing `.idea`, archive cache, and `pyshark/` changes.
+- Before M2 slice 5 implementation, all five private sample hashes and focused
+  protocol facts were rechecked read-only against TShark 4.6.7. The frame 233
+  JPEG range `[138,164076)` hashes to
+  `d8e9ba607bde8bccb1bf812e7d0d354abf41a57c0461e6b59c1fa9d5dcc58888`;
+  the former acceptance hash was disproved by a fresh export and common range
+  variants, so `docs/ACCEPTANCE_SAMPLES.md` was corrected before coding.
+- The same inspection confirmed frame 1367 ZIP range `[3,227)`, a 22-byte EOCD
+  comment, three trailing application bytes, and one encrypted member that must
+  not be opened. It also confirmed the FTP RAR hash, seven HTTP-form capture
+  retransmissions, four one-byte conflicting overlaps in target stream 2, and
+  three identical 1,380-byte retransmissions in WebShell stream 0.
 
 ## Active decisions
 
@@ -178,8 +193,8 @@ Environment paths below are local evidence, not production defaults:
 
 ## Next executable step
 
-Implement M2 slice 5: file magic/carving and bounded TCP stream reconstruction.
-Scan body/transform blobs for embedded file signatures at nonzero offsets,
-validate structural ends and trailing data, create artifact records without
-executing content, and expose transaction/stream evidence queries. Validate
-the embedded ZIP at frame 1367 and JPEG/trailing flag at frame 233.
+Complete the first approved M2 slice 5 sub-slice: replace the unverified file
+carving draft with the bounded parser and schema contract in
+`docs/M2_SLICE5_IMPLEMENTATION.md`. Run migration/unit tests, frame 233 and 1367
+real smoke tests, idempotency checks, Python 3.11 coverage, and Python 3.9 tests;
+then update this checkpoint before beginning TCP reconstruction.
