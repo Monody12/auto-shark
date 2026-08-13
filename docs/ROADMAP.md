@@ -39,6 +39,9 @@ all exit criteria are verified and recorded in `PROJECT_STATE.md`.
 ## M3 - FTP, Telnet, files, and unknown triage (active, estimate 4 days)
 
 - FTP control/PASV/data correlation and static export.
+  Status: complete with explicit setup/command frame correlation, bounded TCP
+  reuse, exact `ftp-data` evidence, budget states, and unreviewed static
+  artifacts. Transferred archive contents are not opened.
 - Directional Telnet dialogue reconstruction.
 - File magic, declared/actual type mismatch, structural end, trailing-data scan.
   Status: reusable bounded carving is complete for HTTP/transform evidence;

@@ -61,7 +61,12 @@ FEATURE_FIELDS = {
             "ftp.request.command",
             "ftp.request.arg",
             "ftp.response.code",
+            "ftp.response.arg",
+            "ftp.passive.ip",
+            "ftp.passive.port",
             "ftp-data.setup-frame",
+            "ftp-data.setup-method",
+            "ftp-data.command-frame",
             "ftp-data.command",
         }
     ),

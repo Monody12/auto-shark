@@ -15,6 +15,7 @@ from .body import extract_http_body
 from .config import Settings
 from .engines.tshark import find_tshark, probe_tshark
 from .files.carve import carve_project
+from .ftp import index_ftp
 from .pipeline import scan_project
 from .project import create_project, inspect_project
 from .queries import query_streams, query_transactions
@@ -97,6 +98,15 @@ def _parser() -> argparse.ArgumentParser:
     triage.add_argument("--max-field-bytes", type=int, default=4096)
     triage.add_argument("--window-bytes", type=int, default=1024 * 1024)
 
+    ftp = commands.add_parser("index-ftp", help="correlate and export bounded FTP transfers")
+    ftp.add_argument("project", type=Path)
+    ftp.add_argument("--tshark", type=Path, help="explicit path to tshark executable")
+    ftp.add_argument("--max-messages", type=int, default=100_000)
+    ftp.add_argument("--max-transfers", type=int, default=10_000)
+    ftp.add_argument("--max-index-bytes", type=int, default=512 * 1024 * 1024)
+    ftp.add_argument("--max-transfer-bytes", type=int, default=256 * 1024 * 1024)
+    ftp.add_argument("--max-total-bytes", type=int, default=512 * 1024 * 1024)
+
     probe = commands.add_parser("probe", help="probe TShark capabilities")
     probe.add_argument("--tshark", type=Path, help="explicit path to tshark executable")
     probe.add_argument("--json", action="store_true", help="emit the complete JSON profile")
@@ -132,6 +142,27 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         parser.print_help()
         return 0
     try:
+        if args.command == "index-ftp":
+            settings = Settings.from_environment()
+            executable = find_tshark(args.tshark or settings.tshark_path)
+            if executable is None:
+                print(
+                    "TShark was not found. Use --tshark or AUTO_SHARK_TSHARK.",
+                    file=sys.stderr,
+                )
+                return 2
+            print(
+                index_ftp(
+                    args.project,
+                    executable,
+                    max_messages=args.max_messages,
+                    max_transfers=args.max_transfers,
+                    max_index_payload_bytes=args.max_index_bytes,
+                    max_transfer_bytes=args.max_transfer_bytes,
+                    max_total_output_bytes=args.max_total_bytes,
+                ).to_json()
+            )
+            return 0
         if args.command == "triage":
             print(
                 triage_project(

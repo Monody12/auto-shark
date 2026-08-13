@@ -499,4 +499,86 @@ MIGRATIONS = (
     CREATE INDEX idx_triage_scan_status ON triage_scan(status,evidence_id);
     CREATE INDEX idx_candidate_signal_candidate ON candidate_signal(candidate_id);
     """,
+    """
+    CREATE TABLE ftp_message (
+        protocol_message_id INTEGER PRIMARY KEY
+            REFERENCES protocol_message(id) ON DELETE CASCADE,
+        request_command TEXT,
+        request_argument TEXT,
+        response_code INTEGER,
+        response_argument TEXT,
+        passive_ip TEXT,
+        passive_port INTEGER CHECK (
+            passive_port IS NULL OR (passive_port > 0 AND passive_port <= 65535)
+        )
+    );
+
+    CREATE TABLE ftp_data_message (
+        protocol_message_id INTEGER PRIMARY KEY
+            REFERENCES protocol_message(id) ON DELETE CASCADE,
+        setup_frame INTEGER,
+        setup_method TEXT,
+        command_frame INTEGER,
+        command TEXT,
+        payload_length INTEGER NOT NULL CHECK (payload_length >= 0)
+    );
+
+    CREATE TABLE ftp_message_run (
+        protocol_message_id INTEGER NOT NULL
+            REFERENCES protocol_message(id) ON DELETE CASCADE,
+        tool_run_id INTEGER NOT NULL REFERENCES tool_run(id) ON DELETE CASCADE,
+        PRIMARY KEY (protocol_message_id,tool_run_id)
+    ) WITHOUT ROWID;
+
+    CREATE TABLE ftp_metadata_skip (
+        tool_run_id INTEGER NOT NULL REFERENCES tool_run(id) ON DELETE CASCADE,
+        capture_id INTEGER NOT NULL REFERENCES capture(id) ON DELETE CASCADE,
+        frame_number INTEGER NOT NULL,
+        protocol TEXT NOT NULL CHECK (protocol IN ('ftp','ftp-data')),
+        reason TEXT NOT NULL CHECK (reason IN ('message-limit')),
+        PRIMARY KEY (tool_run_id,frame_number,protocol),
+        FOREIGN KEY (capture_id,frame_number)
+            REFERENCES frame(capture_id,frame_number) ON DELETE CASCADE
+    ) WITHOUT ROWID;
+
+    CREATE TABLE ftp_transfer (
+        id INTEGER PRIMARY KEY,
+        transfer_id TEXT NOT NULL UNIQUE,
+        capture_id INTEGER NOT NULL REFERENCES capture(id) ON DELETE CASCADE,
+        setup_message_id INTEGER REFERENCES protocol_message(id) ON DELETE SET NULL,
+        command_message_id INTEGER REFERENCES protocol_message(id) ON DELETE SET NULL,
+        metadata_tool_run_id INTEGER NOT NULL REFERENCES tool_run(id) ON DELETE RESTRICT,
+        reconstruction_id INTEGER REFERENCES tcp_reconstruction(id) ON DELETE SET NULL,
+        evidence_id INTEGER REFERENCES evidence(id) ON DELETE SET NULL,
+        artifact_id INTEGER REFERENCES artifact(id) ON DELETE SET NULL,
+        data_stream_index INTEGER NOT NULL CHECK (data_stream_index >= 0),
+        direction TEXT NOT NULL,
+        command TEXT,
+        argument TEXT,
+        suggested_name TEXT,
+        output_bytes INTEGER NOT NULL DEFAULT 0 CHECK (output_bytes >= 0),
+        max_output_bytes INTEGER NOT NULL CHECK (max_output_bytes > 0),
+        status TEXT NOT NULL CHECK (
+            status IN (
+                'indexed','unresolved','skipped-limit','skipped-budget',
+                'complete','partial','conflicting','truncated','empty','failed'
+            )
+        ),
+        error TEXT,
+        updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE ftp_transfer_message (
+        transfer_id INTEGER NOT NULL REFERENCES ftp_transfer(id) ON DELETE CASCADE,
+        data_message_id INTEGER NOT NULL REFERENCES protocol_message(id) ON DELETE CASCADE,
+        ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+        PRIMARY KEY (transfer_id,data_message_id),
+        UNIQUE (transfer_id,ordinal)
+    ) WITHOUT ROWID;
+
+    CREATE INDEX idx_ftp_message_command ON ftp_message(request_command,response_code);
+    CREATE INDEX idx_ftp_data_references
+        ON ftp_data_message(setup_frame,command_frame);
+    CREATE INDEX idx_ftp_transfer_status ON ftp_transfer(status,data_stream_index);
+    """,
 )

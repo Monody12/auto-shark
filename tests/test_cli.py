@@ -1,6 +1,7 @@
 import json
 
 from auto_shark import cli
+from auto_shark.ftp import FtpIndexSummary
 from auto_shark.triage import TriageSummary
 
 
@@ -69,3 +70,62 @@ def test_triage_cli_reports_invalid_limits(capsys, tmp_path) -> None:
     result = cli.main(["triage", str(tmp_path), "--max-total-bytes", "0"])
     assert result == 2
     assert "triage limits must be positive" in capsys.readouterr().err
+
+
+def test_index_ftp_cli_forwards_limits(monkeypatch, capsys, tmp_path) -> None:
+    received = {}
+    executable = tmp_path / "tshark.exe"
+    executable.write_bytes(b"tool")
+
+    def fake_index(project, tshark, **limits):
+        received.update({"project": project, "tshark": tshark, **limits})
+        return FtpIndexSummary(
+            schema_version="auto-shark.ftp-index/v1",
+            project=str(project),
+            messages=0,
+            skipped_messages=0,
+            transfers=0,
+            complete=0,
+            unresolved=0,
+            skipped_limit=0,
+            skipped_budget=0,
+            partial=0,
+            conflicting=0,
+            truncated=0,
+            empty=0,
+            failed=0,
+            output_bytes=0,
+            artifacts=0,
+        )
+
+    monkeypatch.setattr(cli, "index_ftp", fake_index)
+    project = tmp_path / "sample.auto-shark"
+    result = cli.main(
+        [
+            "index-ftp",
+            str(project),
+            "--tshark",
+            str(executable),
+            "--max-messages",
+            "7",
+            "--max-transfers",
+            "11",
+            "--max-index-bytes",
+            "13",
+            "--max-transfer-bytes",
+            "17",
+            "--max-total-bytes",
+            "19",
+        ]
+    )
+    assert result == 0
+    assert received == {
+        "project": project,
+        "tshark": executable.resolve(),
+        "max_messages": 7,
+        "max_transfers": 11,
+        "max_index_payload_bytes": 13,
+        "max_transfer_bytes": 17,
+        "max_total_output_bytes": 19,
+    }
+    assert json.loads(capsys.readouterr().out)["schema_version"] == "auto-shark.ftp-index/v1"

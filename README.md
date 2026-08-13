@@ -79,6 +79,22 @@ Triage records every completed, truncated, skipped, limited, or failed input.
 Known-format ranges retain exact byte provenance; structured authentication
 fields carry versioned score signals rather than answer-specific rules.
 
+FTP control and FTP-DATA streams can be explicitly correlated and statically
+exported under metadata, transfer, index, and output budgets:
+
+```powershell
+uv run auto-shark index-ftp `
+  "$env:LOCALAPPDATA\AutoShark\projects\capture.auto-shark" `
+  --tshark C:\path\to\tshark.exe `
+  --max-transfer-bytes 268435456 --max-total-bytes 536870912
+```
+
+The FTP adapter uses TShark's setup/command frame references and the existing
+bounded TCP reconstruction engine. Only a complete transfer direction becomes
+exact `ftp-data` evidence and an unreviewed artifact. Archives are classified
+by fixed magic bytes only; their contents are not listed, opened, decrypted, or
+unpacked.
+
 One bidirectional TCP stream can be indexed and reconstructed with explicit
 segment and output budgets:
 

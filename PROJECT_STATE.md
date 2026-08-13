@@ -17,6 +17,10 @@ M3 - FTP, Telnet, files, and protocol/manual triage.
 
 Status: active. M0, M1, and M2 exit criteria are complete.
 
+The first M3 slice is active. Its FTP structured metadata, explicit frame
+correlation, bounded TCP reuse, static export, and no-unpack contract is
+recorded in `docs/M3_SLICE1_IMPLEMENTATION.md`. That slice is now complete.
+
 The user approved the detailed M2 slice 5 implementation plan. Its durable
 contract, revalidated sample facts, and verification gates are recorded in
 `docs/M2_SLICE5_IMPLEMENTATION.md`.
@@ -298,6 +302,55 @@ Environment paths below are local evidence, not production defaults:
   runtime databases above return `PRAGMA integrity_check=ok`, zero foreign-key
   violations, and empty `jobs` directories. `uv build` produced the sdist and
   wheel, and the wheel contains `queries.py`, `search.py`, and `triage.py`.
+- M3 FTP read-only inspection verified one control/data transfer in the FTP
+  acceptance capture: PASV 42/44, `RETR flag.rar` frame 49, `150` frame 51,
+  FTP-DATA frame 55, and `226` frame 66. Frame 55 explicitly references setup
+  frame 44 and command frame 49, carries 164 payload bytes on TCP stream 4,
+  starts with RAR4 magic, and hashes to
+  `941702f949e60d081210d33a98552b32d3e5b36673be2e6c0f439904f46b5597`.
+  TShark marks no retransmission or out-of-order condition. No answer file or
+  transferred-content member was read.
+- M3 FTP metadata sub-slice is implemented at schema 9. Ruff and the 18-test
+  FTP protocol/metadata/migration/capability group pass. Tests cover IPv4/IPv6,
+  exact field/frame parsing, multi-frame transfer grouping, stable reruns,
+  explicit unresolved records, message limits/skips, capability failure, and
+  cross-platform filename sanitization.
+- Clean real `m3-ftp-metadata.auto-shark` indexing ran twice with identical
+  summaries: 6 messages (2 requests, 3 responses, 1 FTP-DATA), one transfer,
+  and zero skips/unresolved cases. Stable business rows remain 6 protocol
+  messages, 5 FTP control rows, 1 data row, 1 transfer, and 1 transfer-message
+  link; two tool runs retain 12 message-run provenance links. The transfer maps
+  setup/command/data frames 44/49/55, TCP stream 4, the exact server-to-client
+  direction, and sanitized `flag.rar`. Integrity is `ok`, foreign keys report
+  zero violations, and `jobs` is empty. No artifact exists yet.
+- M3 FTP export orchestration and focused tests are implemented. The full
+  Windows Python 3.11 suite currently reports 95 tests passed at 83 percent
+  coverage. FTP-focused tests cover exact structured parsing, schema 8-to-9,
+  multi-frame grouping, explicit unresolved and message-limit states, complete
+  reconstruction coverage, partial rejection, pre-reconstruction output
+  budgets, RAR4 magic-only classification, artifact/evidence idempotency, and
+  CLI limit forwarding.
+- Repeated real `index-ftp` on `m3-ftp-metadata.auto-shark` returned identical
+  `auto-shark.ftp-index/v1` summaries and one complete 164-byte artifact. The
+  exact `ftp-data` evidence is frame 55, `[0,164)`, direction
+  `172.16.66.10:14438>172.16.66.188:51801`, over the same single reconstruction
+  blob SHA-256
+  `941702f949e60d081210d33a98552b32d3e5b36673be2e6c0f439904f46b5597`.
+  Frames 44/49/55, stream 4, complete/no-gap/no-conflict state, RAR4 magic,
+  `flag.rar`, and `unreviewed` artifact state are linked. Stable business rows
+  are one transfer/message/reconstruction/segment/artifact, two evidence rows,
+  and one blob; all six accumulated TShark runs completed with exit 0 and
+  untruncated stderr. Blob rehash, integrity, foreign keys, and empty jobs pass.
+- A separate real 100-byte transfer budget project persisted one
+  `skipped-budget` transfer before TCP reconstruction. It has one metadata tool
+  run and zero TCP segments, reconstructions, blobs, evidence, or artifacts;
+  integrity, foreign keys, and empty jobs pass.
+- Final M3 FTP verification passes Ruff; Windows CPython 3.11.15 reports 97
+  tests at 83 percent total coverage; CPython 3.9.25 reports the same 97 tests
+  passed. A final real rerun after unresolved-group and reconstruction-failure
+  hardening remained one complete transfer/artifact at 164 bytes. Both schema 9
+  runtime projects pass integrity, foreign keys, and empty jobs. The built
+  package includes `ftp.py` and `protocols/ftp.py`.
 
 ## Active decisions
 
@@ -349,7 +402,8 @@ Environment paths below are local evidence, not production defaults:
 
 ## Next executable step
 
-Plan and contract the first M3 slice before implementation: capability-gated
-FTP control/PASV/data correlation and static export for frames 44/49/55 of the
-verified FTP sample. Preserve the 164-byte RAR hash/provenance and queue it for
-manual review without opening, decrypting, or unpacking it.
+Plan and contract the next M3 slice before implementation: directional Telnet
+dialogue records over current TCP reconstruction, with prompt/input sequencing,
+exact source-frame ranges, binary/control-byte preservation, and bounded JSON
+query output. Reuse the verified stream 0/frame 39-to-41 evidence and do not
+duplicate reconstructed bytes.
