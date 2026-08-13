@@ -38,6 +38,9 @@ Status: active. M0 and M1 exit criteria are complete.
 - `auto-shark analyze` now creates a project, records the TShark capability and
   tool run, ingests HTTP metadata in one database transaction, preserves
   unmatched/orphan cases, and emits a machine-readable analysis summary.
+- M2 slice 2 added SQLite schema 3, incremental hexadecimal stdout decoding,
+  bounded on-demand HTTP body extraction, atomic content-addressed blob writes,
+  original evidence locators, explicit body states, and `extract-body` CLI.
 
 ## Verification at this checkpoint
 
@@ -49,15 +52,15 @@ Environment paths below are local evidence, not production defaults:
 - `uv run pytest --cov=auto_shark --cov-report=term-missing`: 14 passed,
   total coverage 68 percent on Windows Python 3.11.15.
 - Separate environment `...\venvs\py39`; `uv sync --python 3.9 --all-groups`
-  and `uv run pytest -q`: 23 passed on CPython 3.9.25 after M2 slice 1.
+  and `uv run pytest -q`: 35 passed on CPython 3.9.25 after M2 slice 2.
 - `auto-shark probe --tshark <portable 4.6.7>`: usable; HTTP, HTTP export,
   TCP reassembly, FTP, FTP-DATA export, Telnet, and multipart all available.
 - A real `networking.pcap` project was created and reopened under
   `%LOCALAPPDATA%\AutoShark\projects`; it recorded SQLite schema 1, 4,570 bytes,
   and SHA-256 `7072e7e1a42efe6b77bc0a428b5297440f123098143e830c1e9b7c7ae6886165`.
 - After M2 slice 1, `uv run ruff check .` passed and the Python 3.11 suite
-  reported 23 passed. The prior coverage run before the final one-test filter
-  addition was 69 percent; coverage should be refreshed with the next slice.
+  reported 23 passed. After M2 slice 2, the Python 3.11 suite reported 35
+  passed with 67 percent total coverage; Ruff also passed.
 - Real `菜刀666.pcapng` analysis under `%LOCALAPPDATA%` recorded schema 2,
   24 HTTP-over-TCP requests, 23 responses, 23 matched transactions, one
   unmatched request, and zero orphan responses.
@@ -66,6 +69,23 @@ Environment paths below are local evidence, not production defaults:
 - The completed TShark run has exit code 0 and untruncated stderr. Four UDP SSDP
   `M-SEARCH` messages also carry `http.request` fields in Wireshark, so the
   HTTP/TCP adapter deliberately uses `tcp && (http.request || http.response)`.
+- Real body extraction verified schema 3 and these capture facts:
+  - frame 1068 request: 204,999/204,999 bytes, complete, SHA-256
+    `ab5303ab5c7f47af759a9153951c1256c82c7409b71c813ac677233c0191662d`;
+  - frame 1156 response: 185,076/185,076 bytes, complete, SHA-256
+    `ce19066c660bfb155945767598257fe003481969614e1650fa617cdd195d3920`;
+  - frame 180 request: 100/675 bytes under a 100-byte policy limit, recorded as
+    `limit-truncated` with SHA-256
+    `bfb8c1508d58163d66fdfe507d2543854cf942e85b525518807f85dc2c4db3fb`;
+  - frame 1367 response: 230/230 bytes, complete, SHA-256
+    `6c1cbfc323dfb9bc2724c055ab0c1fad88a70b79ca058b8b697b52d422d45214`;
+    its bytes begin with application delimiter `->|` and then ZIP magic, so
+    carving must scan bounded offsets instead of checking offset zero only;
+  - frame 645 request: no declared or extracted body, recorded as `absent`
+    without creating an empty blob or evidence row.
+- All four body blob sizes and hashes were independently re-read from disk and
+  matched SQLite. All associated tool runs completed with exit code 0, and the
+  isolated `jobs` directory was empty after extraction.
 - Parent repository status after migration no longer lists `auto-shark/` and
   retains the pre-existing `.idea`, archive cache, and `pyshark/` changes.
 
@@ -85,6 +105,11 @@ Environment paths below are local evidence, not production defaults:
 - HTTP transaction IDs are request-frame based. Pairing uses both TShark
   association directions and preserves extra responses, unmatched requests,
   and orphan responses; stream ordering is never used to guess a response.
+- HTTP body status distinguishes complete, empty, absent, missing, partial,
+  policy-truncated, and length-mismatch. Only nonempty bytes create blobs and
+  evidence. A later full extraction can upgrade a blob's completeness.
+- On Windows, `tempfile.mkstemp` descriptors are wrapped with `os.fdopen`;
+  generic `open(fd, ...)` produced `EINVAL` and is covered by the real smoke run.
 
 ## Risks and constraints
 
@@ -98,8 +123,8 @@ Environment paths below are local evidence, not production defaults:
 
 ## Next executable step
 
-Implement M2 slice 2: bounded on-demand HTTP request/response body extraction
-by representative frame, stream bytes into the content-addressed blob store,
-create original `evidence` locators and blob rows, and test text/binary/empty/
-missing/truncated distinctions. Validate the large WebShell body and ZIP-bearing
-response without embedding full bodies in SQLite or summary JSON.
+Implement M2 slice 3: streaming printable/raw flag search over body blobs plus
+bounded URL-form, Base64/Base64URL, and hex transforms. Persist transform
+lineage and candidate evidence/ranking, never execute decoded content, and
+validate that WebShell form parameters decode without placing full bodies in
+SQLite. Include chunk-boundary matches and the embedded ZIP offset as tests.

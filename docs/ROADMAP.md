@@ -26,6 +26,7 @@ all exit criteria are verified and recorded in `PROJECT_STATE.md`.
 - Precise HTTP request/response pairing across keep-alive connections.
   Status: complete, including unmatched/orphan/extra-response representation.
 - On-demand bounded body extraction and TCP reconstruction.
+  Status: HTTP body extraction complete; TCP reconstruction remains pending.
 - Raw/text/field search plus URL, Base64/Base64URL, and hex lineage.
 - Explainable candidate normalization, ranking, and deduplication.
 

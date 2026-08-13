@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Optional
 
 from .analysis import analyze_http
+from .body import extract_http_body
 from .config import Settings
 from .engines.tshark import find_tshark, probe_tshark
 from .project import create_project, inspect_project
@@ -30,6 +31,12 @@ def _parser() -> argparse.ArgumentParser:
     analyze.add_argument("--project", required=True, type=Path)
     analyze.add_argument("--tshark", type=Path, help="explicit path to tshark executable")
     analyze.add_argument("--uri", help="also count transactions with this exact request URI")
+
+    extract = commands.add_parser("extract-body", help="extract one indexed HTTP body")
+    extract.add_argument("project", type=Path)
+    extract.add_argument("frame", type=int)
+    extract.add_argument("--tshark", type=Path, help="explicit path to tshark executable")
+    extract.add_argument("--max-bytes", type=int, default=16 * 1024 * 1024)
 
     probe = commands.add_parser("probe", help="probe TShark capabilities")
     probe.add_argument("--tshark", type=Path, help="explicit path to tshark executable")
@@ -66,6 +73,24 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         parser.print_help()
         return 0
     try:
+        if args.command == "extract-body":
+            settings = Settings.from_environment()
+            executable = find_tshark(args.tshark or settings.tshark_path)
+            if executable is None:
+                print(
+                    "TShark was not found. Use --tshark or AUTO_SHARK_TSHARK.",
+                    file=sys.stderr,
+                )
+                return 2
+            print(
+                extract_http_body(
+                    args.project,
+                    args.frame,
+                    executable,
+                    max_body_bytes=args.max_bytes,
+                ).to_json()
+            )
+            return 0
         if args.command == "analyze":
             settings = Settings.from_environment()
             executable = find_tshark(args.tshark or settings.tshark_path)

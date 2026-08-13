@@ -22,6 +22,17 @@ uv run auto-shark analyze capture.pcapng `
 Body extraction, decoding, candidate ranking, and reports are still active M2+
 work; consult `PROJECT_STATE.md` rather than assuming they are implemented.
 
+One indexed HTTP body can currently be extracted with a hard decoded-byte cap:
+
+```powershell
+uv run auto-shark extract-body `
+  "$env:LOCALAPPDATA\AutoShark\projects\capture.auto-shark" 1068 `
+  --tshark C:\path\to\tshark.exe --max-bytes 16777216
+```
+
+The body is stored by SHA-256 outside SQLite; the command records evidence and
+tool provenance. Search and decoding are the next active M2 slice.
+
 ## Product boundaries
 
 - Offline captures only in v1; no live capture or multi-challenge batch mode.

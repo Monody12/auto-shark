@@ -257,4 +257,25 @@ MIGRATIONS = (
     CREATE INDEX idx_http_request_in ON http_message(request_in_frame);
     CREATE INDEX idx_http_uri ON http_message(uri);
     """,
+    """
+    CREATE TABLE http_body (
+        protocol_message_id INTEGER PRIMARY KEY
+            REFERENCES protocol_message(id) ON DELETE CASCADE,
+        evidence_id INTEGER REFERENCES evidence(id) ON DELETE SET NULL,
+        tool_run_id INTEGER NOT NULL REFERENCES tool_run(id) ON DELETE RESTRICT,
+        declared_length INTEGER CHECK (declared_length IS NULL OR declared_length >= 0),
+        extracted_length INTEGER NOT NULL CHECK (extracted_length >= 0),
+        status TEXT NOT NULL CHECK (
+            status IN (
+                'complete', 'empty', 'absent', 'missing', 'partial',
+                'limit-truncated', 'length-mismatch'
+            )
+        ),
+        truncated INTEGER NOT NULL CHECK (truncated IN (0, 1)),
+        error TEXT,
+        updated_at TEXT NOT NULL
+    );
+
+    CREATE INDEX idx_http_body_status ON http_body(status);
+    """,
 )
