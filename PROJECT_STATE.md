@@ -41,6 +41,10 @@ Status: active. M0 and M1 exit criteria are complete.
 - M2 slice 2 added SQLite schema 3, incremental hexadecimal stdout decoding,
   bounded on-demand HTTP body extraction, atomic content-addressed blob writes,
   original evidence locators, explicit body states, and `extract-body` CLI.
+- M2 slice 3 added SQLite schema 4, byte-accurate ordered URL-form parsing,
+  conservative Base64/Base64URL/hex recognition, bounded transform budgets,
+  streaming known-flag search with chunk overlap, exact match evidence,
+  candidate ranking/deduplication, and idempotent `scan` CLI.
 
 ## Verification at this checkpoint
 
@@ -52,7 +56,7 @@ Environment paths below are local evidence, not production defaults:
 - `uv run pytest --cov=auto_shark --cov-report=term-missing`: 14 passed,
   total coverage 68 percent on Windows Python 3.11.15.
 - Separate environment `...\venvs\py39`; `uv sync --python 3.9 --all-groups`
-  and `uv run pytest -q`: 35 passed on CPython 3.9.25 after M2 slice 2.
+  and `uv run pytest -q`: 42 passed on CPython 3.9.25 after M2 slice 3.
 - `auto-shark probe --tshark <portable 4.6.7>`: usable; HTTP, HTTP export,
   TCP reassembly, FTP, FTP-DATA export, Telnet, and multipart all available.
 - A real `networking.pcap` project was created and reopened under
@@ -86,6 +90,26 @@ Environment paths below are local evidence, not production defaults:
 - All four body blob sizes and hashes were independently re-read from disk and
   matched SQLite. All associated tool runs completed with exit code 0, and the
   isolated `jobs` directory was empty after extraction.
+- After M2 slice 3, `uv run ruff check .` passed; Python 3.11 reported 43
+  passed and 71 percent total coverage.
+- A clean `菜刀666` schema 4 project ran analyze, extraction, and scan twice.
+  Both scans remained exactly 3 bodies, 4 form fields, 7 transforms, and zero
+  current flag candidates; database row counts stayed 4/7/0.
+- Frame 1068 lineage is:
+  - `aa`: URL-form value, 38 bytes;
+  - `action`: URL-form value 440 bytes -> Base64 output 328 bytes, SHA-256
+    `826e5936f6e0217b3241950382139d4247a2a795ffa0a08421428c353bb932b1`;
+  - `z1`: URL-form value 40 bytes -> Base64 path `D:\wamp64\www\upload\6666.jpg`,
+    29 bytes, SHA-256
+    `a6aa2c2035ace960e44814d0f078c5b7f3b22d8d576c40fb5e7afc52c8aa86fa`;
+  - `z2`: URL-form value 204,452 bytes -> hex-decoded JPEG 102,226 bytes,
+    SHA-256 `a7b43078200c11f3e6eeb7ef6693db27d703460df75fd220c4e05f4a20ac50fa`.
+  Large transform output has no SQLite `text_value`; bytes remain in the blob
+  store. The PHP action is displayed statically and never executed.
+- A clean `被嗅探的流量` project independently found exactly one candidate from
+  frame 233 without access to the answer oracle. Its `flag-match` evidence is
+  frame 233, body offset 164,076, length 38, parent blob SHA-256
+  `42a40528f6d4ad94653f4ff0e798b41184e5c79938c5a57942ae3e0915a36073`.
 - Parent repository status after migration no longer lists `auto-shark/` and
   retains the pre-existing `.idea`, archive cache, and `pyshark/` changes.
 
@@ -110,6 +134,17 @@ Environment paths below are local evidence, not production defaults:
   evidence. A later full extraction can upgrade a blob's completeness.
 - On Windows, `tempfile.mkstemp` descriptors are wrapped with `os.fdopen`;
   generic `open(fd, ...)` produced `EINVAL` and is covered by the real smoke run.
+- Only complete URL-form bodies receive structured field transforms. Truncated
+  bodies remain searchable raw evidence but are not parsed as complete forms.
+- High-confidence known-format search currently recognizes explicit `flag`,
+  `ctf`, `key`, and `answer` prefixes. Unknown-format triage remains a separate
+  detector so preceding printable bytes are not swallowed into a false value.
+- Candidate links point to `flag-match` evidence with exact byte offset/length,
+  which in turn references the parent evidence/blob; they do not merely point
+  at the whole body.
+- Both URL-form decoding and second-layer Base64/hex output count against the
+  configured per-output and total transform byte budgets. Over-budget raw field
+  slices remain evidence, but no decoded blob or transform is created.
 
 ## Risks and constraints
 
@@ -123,8 +158,8 @@ Environment paths below are local evidence, not production defaults:
 
 ## Next executable step
 
-Implement M2 slice 3: streaming printable/raw flag search over body blobs plus
-bounded URL-form, Base64/Base64URL, and hex transforms. Persist transform
-lineage and candidate evidence/ranking, never execute decoded content, and
-validate that WebShell form parameters decode without placing full bodies in
-SQLite. Include chunk-boundary matches and the embedded ZIP offset as tests.
+Implement M2 slice 4: automatic bounded body selection/extraction for indexed
+HTTP transactions plus TCP stream reconstruction evidence. Add protocol-aware
+body priority, total extraction budget, progress/failure persistence, and a
+single `analyze --with-bodies --scan` workflow. Validate all 19 WebShell target
+transactions and preserve the ZIP-bearing response without manual frame lists.

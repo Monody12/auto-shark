@@ -278,4 +278,20 @@ MIGRATIONS = (
 
     CREATE INDEX idx_http_body_status ON http_body(status);
     """,
+    """
+    CREATE TABLE form_field (
+        id INTEGER PRIMARY KEY,
+        protocol_message_id INTEGER NOT NULL
+            REFERENCES protocol_message(id) ON DELETE CASCADE,
+        ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+        name TEXT NOT NULL,
+        raw_value_evidence_id INTEGER NOT NULL
+            REFERENCES evidence(id) ON DELETE CASCADE,
+        decoded_value_evidence_id INTEGER NOT NULL
+            REFERENCES evidence(id) ON DELETE CASCADE,
+        UNIQUE (protocol_message_id, ordinal)
+    );
+
+    CREATE INDEX idx_form_field_name ON form_field(name);
+    """,
 )

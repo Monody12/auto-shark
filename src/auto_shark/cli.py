@@ -14,6 +14,7 @@ from .analysis import analyze_http
 from .body import extract_http_body
 from .config import Settings
 from .engines.tshark import find_tshark, probe_tshark
+from .pipeline import scan_project
 from .project import create_project, inspect_project
 from .version import __version__
 
@@ -37,6 +38,12 @@ def _parser() -> argparse.ArgumentParser:
     extract.add_argument("frame", type=int)
     extract.add_argument("--tshark", type=Path, help="explicit path to tshark executable")
     extract.add_argument("--max-bytes", type=int, default=16 * 1024 * 1024)
+
+    scan = commands.add_parser("scan", help="scan extracted evidence and apply bounded transforms")
+    scan.add_argument("project", type=Path)
+    scan.add_argument("--max-transform-bytes", type=int, default=16 * 1024 * 1024)
+    scan.add_argument("--max-transform-total", type=int, default=64 * 1024 * 1024)
+    scan.add_argument("--max-form-bytes", type=int, default=16 * 1024 * 1024)
 
     probe = commands.add_parser("probe", help="probe TShark capabilities")
     probe.add_argument("--tshark", type=Path, help="explicit path to tshark executable")
@@ -73,6 +80,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         parser.print_help()
         return 0
     try:
+        if args.command == "scan":
+            print(
+                scan_project(
+                    args.project,
+                    max_transform_output_bytes=args.max_transform_bytes,
+                    max_transform_total_bytes=args.max_transform_total,
+                    max_form_input_bytes=args.max_form_bytes,
+                ).to_json()
+            )
+            return 0
         if args.command == "extract-body":
             settings = Settings.from_environment()
             executable = find_tshark(args.tshark or settings.tshark_path)

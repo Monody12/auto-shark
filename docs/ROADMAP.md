@@ -28,7 +28,9 @@ all exit criteria are verified and recorded in `PROJECT_STATE.md`.
 - On-demand bounded body extraction and TCP reconstruction.
   Status: HTTP body extraction complete; TCP reconstruction remains pending.
 - Raw/text/field search plus URL, Base64/Base64URL, and hex lineage.
+  Status: complete for extracted HTTP bodies and URL-form fields.
 - Explainable candidate normalization, ranking, and deduplication.
+  Status: known-format candidates complete; broader triage/ranking remains.
 
 ## M3 - FTP, Telnet, files, and unknown triage (pending, estimate 4 days)
 

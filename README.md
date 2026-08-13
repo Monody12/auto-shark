@@ -31,7 +31,16 @@ uv run auto-shark extract-body `
 ```
 
 The body is stored by SHA-256 outside SQLite; the command records evidence and
-tool provenance. Search and decoding are the next active M2 slice.
+tool provenance. Extracted evidence can then be scanned with bounded transforms:
+
+```powershell
+uv run auto-shark scan `
+  "$env:LOCALAPPDATA\AutoShark\projects\capture.auto-shark"
+```
+
+The scanner currently handles raw known-format flags and complete URL forms,
+then one conservative Base64/Base64URL/hex layer. Automatic body selection and
+broader unknown-format triage are still active M2 work.
 
 ## Product boundaries
 
