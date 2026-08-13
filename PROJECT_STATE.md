@@ -59,6 +59,12 @@ contract, revalidated sample facts, and verification gates are recorded in
   trailing range evidence, artifact content deduplication, and multi-source
   artifact provenance. `scan --with-files` is explicit; ordinary `scan` keeps
   its previous cost and behavior.
+- M2 slice 5B added SQLite schema 7, capability-gated streaming TCP segment
+  indexing, per-run segment/skip provenance, per-direction sequence
+  reconstruction, first-seen overlap policy, exact duplicate-source ranges,
+  exact conflicting-byte records, explicit gaps, midstream state, bounded
+  index/direction/total output budgets, and current reconstructed-stream
+  evidence with frame ranges. `reconstruct-stream` exposes the workflow.
 
 ## Verification at this checkpoint
 
@@ -170,6 +176,40 @@ Environment paths below are local evidence, not production defaults:
   multipart project remained 1/1/1/1 for file_scan/file_carve/artifact/link;
   the WebShell project remained 133/2/2/2. Both databases pass
   `PRAGMA foreign_key_check`; both runtime `jobs` directories remain empty.
+- After M2 slice 5B, `uv run ruff check .` passed. Python 3.11.15 reported 67
+  tests passed with 75 percent total coverage; Python 3.9.25 reported the same
+  67 tests passed. Tests cover schema 6-to-7 migration, dynamic optional
+  TShark fields, bidirectional isolation, exact retransmissions, partial and
+  conflicting overlaps, gaps, midstream captures, index/segment/direction/total
+  budgets, per-segment skip records, rerun isolation, current evidence
+  selection, stable reconstruction rows, and empty temporary job cleanup.
+- A clean real Telnet stream 0 project indexed 36 segments/310 payload bytes.
+  Client-to-server reconstructed 124 bytes (frames 4-52), SHA-256
+  `7bf3a3d8c8d8664c12f6c527e809b10a4b76ce28a778f20ca5dff5eae1f6b700`;
+  server-to-client reconstructed 186 bytes (frames 6-55), SHA-256
+  `420bcf53bf0f7cf10f9795d4c2b053543b5aacc23280cdeeba40b3067c0656cb`.
+  Both directions are complete, gap-free, conflict-free, and not midstream.
+- A clean real HTTP-form stream 2 project indexed 26 segments/9,659 payload
+  bytes. Server-to-client removed two exact 20-byte retransmissions and emitted
+  7,548 bytes, SHA-256
+  `41823c9d6a1302bcb4bfa27e6d9ff72e305b4fee605c3367fd8a4dd5b5f5e5cc`.
+  Client-to-server emitted the deterministic first-seen 2,067 bytes, SHA-256
+  `d4334f464d6f57df87d031b35108ecd99d654875749d63760ff1cc0a61229d54`,
+  and persisted four one-byte conflicts at relative sequence 2,067 against
+  first frame 64 from conflicting frames 184, 291, 308, and 326.
+- A clean real WebShell stream 0 project indexed 289 segments/585,557 payload
+  bytes. Three exact 1,380-byte retransmissions were retained as duplicate
+  provenance but omitted from output. The complete 581,417-byte stream hashes
+  to `5e5b2b9cd1854e1435bc02b5f6ec5c836346e41d10346aed52d27383e75e71eb`.
+- Repeating all three real reconstructions preserved segment, reconstruction,
+  source, gap, conflict, evidence, and output hashes; only new tool-run and
+  segment-run provenance was appended. Every output hash was independently
+  re-read from disk, every database passed `PRAGMA foreign_key_check`, every
+  TShark run completed with untruncated stderr, and every `jobs` directory was
+  empty.
+- A separate real WebShell stream 0 run with a 100-byte index budget persisted
+  all 289 payload segments as `payload-budget` skips, produced no fake blob,
+  returned a `truncated` direction, and left no selected segment silent.
 
 ## Active decisions
 
@@ -220,9 +260,10 @@ Environment paths below are local evidence, not production defaults:
 
 ## Next executable step
 
-Implement M2 slice 5B from `docs/M2_SLICE5_IMPLEMENTATION.md`: schema 7 TCP
-segment provenance and per-direction sequence reconstruction. Stream available
-TShark fields, deduplicate exact retransmissions, persist conflicting overlaps
-and gaps, enforce per-direction/total budgets, map output ranges to contributing
-frames, and validate HTTP-form stream 2 plus WebShell stream 0 before updating
-this checkpoint again.
+Implement M2 slice 6: expose stable transaction/stream evidence queries and
+broader unknown-format triage/ranking over current body, transform, artifact,
+and reconstructed-stream evidence. Add query-focused CLI JSON contracts without
+duplicating stored bytes; validate that Telnet frame 41 and HTTP-form frame 20
+rank above background evidence while keeping raw provenance and explicit TCP
+conflict states. Update this checkpoint before starting FTP/Telnet protocol
+adapters in M3.

@@ -34,6 +34,28 @@ FEATURE_FIELDS = {
         }
     ),
     "tcp_reassembly": frozenset({"tcp.payload", "tcp.segment_data", "tcp.reassembled.data"}),
+    "tcp_stream": frozenset(
+        {
+            "frame.number",
+            "frame.time_epoch",
+            "frame.cap_len",
+            "frame.len",
+            "tcp.srcport",
+            "tcp.dstport",
+            "tcp.stream",
+            "tcp.seq",
+            "tcp.seq_raw",
+            "tcp.len",
+            "tcp.payload",
+            "tcp.flags.syn",
+            "tcp.flags.fin",
+            "tcp.flags.reset",
+            "tcp.analysis.retransmission",
+            "tcp.analysis.spurious_retransmission",
+            "tcp.analysis.out_of_order",
+            "tcp.analysis.lost_segment",
+        }
+    ),
     "ftp": frozenset(
         {
             "ftp.request.command",

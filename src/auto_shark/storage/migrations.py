@@ -361,4 +361,104 @@ MIGRATIONS = (
     CREATE UNIQUE INDEX idx_file_scan_parent ON file_scan(parent_evidence_id);
     CREATE INDEX idx_file_carve_parent ON file_carve(parent_evidence_id, start_offset);
     """,
+    """
+    CREATE TABLE tcp_segment (
+        id INTEGER PRIMARY KEY,
+        segment_id TEXT NOT NULL UNIQUE,
+        capture_id INTEGER NOT NULL REFERENCES capture(id) ON DELETE CASCADE,
+        conversation_id INTEGER NOT NULL REFERENCES conversation(id) ON DELETE CASCADE,
+        tool_run_id INTEGER NOT NULL REFERENCES tool_run(id) ON DELETE RESTRICT,
+        frame_number INTEGER NOT NULL,
+        stream_index INTEGER NOT NULL CHECK (stream_index >= 0),
+        direction TEXT NOT NULL,
+        sequence_relative INTEGER NOT NULL CHECK (sequence_relative >= 0),
+        sequence_raw INTEGER NOT NULL CHECK (sequence_raw >= 0),
+        payload_length INTEGER NOT NULL CHECK (payload_length > 0),
+        payload_blob_id INTEGER NOT NULL REFERENCES blob(id) ON DELETE RESTRICT,
+        retransmission INTEGER NOT NULL CHECK (retransmission IN (0,1)),
+        spurious_retransmission INTEGER NOT NULL CHECK (spurious_retransmission IN (0,1)),
+        out_of_order INTEGER NOT NULL CHECK (out_of_order IN (0,1)),
+        lost_segment INTEGER NOT NULL CHECK (lost_segment IN (0,1)),
+        FOREIGN KEY (capture_id,frame_number)
+            REFERENCES frame(capture_id,frame_number) ON DELETE CASCADE
+    );
+
+    CREATE TABLE tcp_segment_run (
+        segment_id INTEGER NOT NULL REFERENCES tcp_segment(id) ON DELETE CASCADE,
+        tool_run_id INTEGER NOT NULL REFERENCES tool_run(id) ON DELETE CASCADE,
+        PRIMARY KEY (segment_id,tool_run_id)
+    ) WITHOUT ROWID;
+
+    CREATE TABLE tcp_segment_skip (
+        tool_run_id INTEGER NOT NULL REFERENCES tool_run(id) ON DELETE CASCADE,
+        capture_id INTEGER NOT NULL REFERENCES capture(id) ON DELETE CASCADE,
+        frame_number INTEGER NOT NULL,
+        stream_index INTEGER NOT NULL CHECK (stream_index >= 0),
+        direction TEXT NOT NULL,
+        payload_length INTEGER NOT NULL CHECK (payload_length > 0),
+        reason TEXT NOT NULL CHECK (reason IN ('segment-limit','payload-budget')),
+        PRIMARY KEY (tool_run_id,frame_number),
+        FOREIGN KEY (capture_id,frame_number)
+            REFERENCES frame(capture_id,frame_number) ON DELETE CASCADE
+    ) WITHOUT ROWID;
+
+    CREATE TABLE tcp_reconstruction (
+        id INTEGER PRIMARY KEY,
+        reconstruction_id TEXT NOT NULL UNIQUE,
+        conversation_id INTEGER NOT NULL REFERENCES conversation(id) ON DELETE CASCADE,
+        direction TEXT NOT NULL,
+        evidence_id INTEGER REFERENCES evidence(id) ON DELETE SET NULL,
+        tool_run_id INTEGER NOT NULL REFERENCES tool_run(id) ON DELETE RESTRICT,
+        status TEXT NOT NULL CHECK (
+            status IN ('complete','partial','conflicting','truncated','empty')
+        ),
+        sequence_start INTEGER,
+        sequence_end INTEGER,
+        unique_bytes INTEGER NOT NULL CHECK (unique_bytes >= 0),
+        output_bytes INTEGER NOT NULL CHECK (output_bytes >= 0),
+        duplicate_bytes INTEGER NOT NULL CHECK (duplicate_bytes >= 0),
+        conflict_bytes INTEGER NOT NULL CHECK (conflict_bytes >= 0),
+        gap_bytes INTEGER NOT NULL CHECK (gap_bytes >= 0),
+        capture_midstream INTEGER NOT NULL CHECK (capture_midstream IN (0,1)),
+        max_output_bytes INTEGER NOT NULL CHECK (max_output_bytes >= 0),
+        updated_at TEXT NOT NULL,
+        UNIQUE (conversation_id,direction)
+    );
+
+    CREATE TABLE tcp_reconstruction_source (
+        reconstruction_id INTEGER NOT NULL
+            REFERENCES tcp_reconstruction(id) ON DELETE CASCADE,
+        segment_id INTEGER NOT NULL REFERENCES tcp_segment(id) ON DELETE CASCADE,
+        sequence_offset INTEGER NOT NULL CHECK (sequence_offset >= 0),
+        output_offset INTEGER NOT NULL CHECK (output_offset >= 0),
+        byte_length INTEGER NOT NULL CHECK (byte_length > 0),
+        role TEXT NOT NULL CHECK (role IN ('primary','duplicate')),
+        PRIMARY KEY (reconstruction_id,segment_id,sequence_offset,role)
+    ) WITHOUT ROWID;
+
+    CREATE TABLE tcp_gap (
+        reconstruction_id INTEGER NOT NULL
+            REFERENCES tcp_reconstruction(id) ON DELETE CASCADE,
+        sequence_start INTEGER NOT NULL CHECK (sequence_start >= 0),
+        byte_length INTEGER NOT NULL CHECK (byte_length > 0),
+        PRIMARY KEY (reconstruction_id,sequence_start)
+    ) WITHOUT ROWID;
+
+    CREATE TABLE tcp_overlap_conflict (
+        id INTEGER PRIMARY KEY,
+        conflict_id TEXT NOT NULL UNIQUE,
+        reconstruction_id INTEGER NOT NULL
+            REFERENCES tcp_reconstruction(id) ON DELETE CASCADE,
+        first_segment_id INTEGER NOT NULL REFERENCES tcp_segment(id) ON DELETE CASCADE,
+        conflicting_segment_id INTEGER NOT NULL REFERENCES tcp_segment(id) ON DELETE CASCADE,
+        sequence_start INTEGER NOT NULL CHECK (sequence_start >= 0),
+        byte_length INTEGER NOT NULL CHECK (byte_length > 0),
+        first_sha256 TEXT NOT NULL,
+        conflicting_sha256 TEXT NOT NULL
+    );
+
+    CREATE INDEX idx_tcp_segment_stream
+        ON tcp_segment(conversation_id,direction,sequence_relative,frame_number);
+    CREATE INDEX idx_tcp_reconstruction_status ON tcp_reconstruction(status);
+    """,
 )

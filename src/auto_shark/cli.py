@@ -17,6 +17,7 @@ from .engines.tshark import find_tshark, probe_tshark
 from .files.carve import carve_project
 from .pipeline import scan_project
 from .project import create_project, inspect_project
+from .tcp import reconstruct_tcp_stream
 from .version import __version__
 from .workflow import analyze_with_bodies
 
@@ -62,6 +63,17 @@ def _parser() -> argparse.ArgumentParser:
     carve.add_argument("--max-candidates", type=int, default=128)
     carve.add_argument("--window-bytes", type=int, default=1024 * 1024)
 
+    reconstruct = commands.add_parser(
+        "reconstruct-stream", help="index and reconstruct one bidirectional TCP stream"
+    )
+    reconstruct.add_argument("project", type=Path)
+    reconstruct.add_argument("stream", type=int)
+    reconstruct.add_argument("--tshark", type=Path, help="explicit path to tshark executable")
+    reconstruct.add_argument("--max-segments", type=int, default=100_000)
+    reconstruct.add_argument("--max-index-bytes", type=int, default=512 * 1024 * 1024)
+    reconstruct.add_argument("--max-direction-bytes", type=int, default=256 * 1024 * 1024)
+    reconstruct.add_argument("--max-total-bytes", type=int, default=512 * 1024 * 1024)
+
     probe = commands.add_parser("probe", help="probe TShark capabilities")
     probe.add_argument("--tshark", type=Path, help="explicit path to tshark executable")
     probe.add_argument("--json", action="store_true", help="emit the complete JSON profile")
@@ -97,6 +109,27 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         parser.print_help()
         return 0
     try:
+        if args.command == "reconstruct-stream":
+            settings = Settings.from_environment()
+            executable = find_tshark(args.tshark or settings.tshark_path)
+            if executable is None:
+                print(
+                    "TShark was not found. Use --tshark or AUTO_SHARK_TSHARK.",
+                    file=sys.stderr,
+                )
+                return 2
+            print(
+                reconstruct_tcp_stream(
+                    args.project,
+                    args.stream,
+                    executable,
+                    max_segments=args.max_segments,
+                    max_index_payload_bytes=args.max_index_bytes,
+                    max_direction_bytes=args.max_direction_bytes,
+                    max_total_output_bytes=args.max_total_bytes,
+                ).to_json()
+            )
+            return 0
         if args.command == "carve":
             print(
                 carve_project(

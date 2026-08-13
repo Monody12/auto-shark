@@ -21,7 +21,7 @@ uv run auto-shark analyze capture.pcapng `
   --tshark C:\path\to\tshark.exe
 ```
 
-TCP reconstruction, broader triage, and reports remain active M2+ work; consult
+Broader triage, query surfaces, and reports remain active M2+ work; consult
 `PROJECT_STATE.md` for the exact tested checkpoint.
 
 One indexed HTTP body can currently be extracted with a hard decoded-byte cap:
@@ -51,8 +51,23 @@ uv run auto-shark analyze capture.pcapng `
   --with-bodies --scan --max-body-total 67108864
 ```
 
-Per-message task status is persisted, including explicit budget skips. TCP
-reconstruction and broader unknown-format triage remain active.
+Per-message task status is persisted, including explicit budget skips. Broader
+unknown-format triage and stable query surfaces remain active.
+
+One bidirectional TCP stream can be indexed and reconstructed with explicit
+segment and output budgets:
+
+```powershell
+uv run auto-shark reconstruct-stream `
+  "$env:LOCALAPPDATA\AutoShark\projects\capture.auto-shark" 0 `
+  --tshark C:\path\to\tshark.exe `
+  --max-index-bytes 536870912 --max-direction-bytes 268435456
+```
+
+Directions are reconstructed independently by TCP sequence. Exact
+retransmissions retain duplicate provenance without duplicating output;
+conflicting overlaps and missing ranges remain explicit database records.
+Captured bytes are never executed.
 
 Static file carving is an explicit bounded operation. Ordinary `scan` does not
 silently add its cost; use either command below:

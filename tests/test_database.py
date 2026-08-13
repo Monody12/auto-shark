@@ -53,3 +53,26 @@ def test_schema_five_database_migrates_to_file_carving_schema(tmp_path) -> None:
         assert connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
     assert {"file_scan", "file_carve", "artifact_evidence"}.issubset(set(database.table_names()))
+
+
+def test_schema_six_database_migrates_to_tcp_reconstruction_schema(tmp_path) -> None:
+    path = tmp_path / "schema-six.sqlite"
+    database = Database(path)
+    with database.connect() as connection:
+        for script in MIGRATIONS[:6]:
+            connection.executescript(script)
+        connection.execute(f"PRAGMA application_id = {APPLICATION_ID}")
+        connection.execute("PRAGMA user_version = 6")
+    database.initialize()
+    with database.connect() as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+    assert {
+        "tcp_segment",
+        "tcp_segment_run",
+        "tcp_segment_skip",
+        "tcp_reconstruction",
+        "tcp_reconstruction_source",
+        "tcp_gap",
+        "tcp_overlap_conflict",
+    }.issubset(set(database.table_names()))

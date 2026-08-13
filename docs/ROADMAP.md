@@ -27,11 +27,13 @@ all exit criteria are verified and recorded in `PROJECT_STATE.md`.
   Status: complete, including unmatched/orphan/extra-response representation.
 - On-demand bounded body extraction and TCP reconstruction.
   Status: HTTP body extraction and automatic transaction scheduling complete;
-  TCP reconstruction is active under `docs/M2_SLICE5_IMPLEMENTATION.md`.
+  bounded per-direction TCP reconstruction is complete, including exact
+  retransmission, conflict, gap, budget, and frame-range provenance.
 - Raw/text/field search plus URL, Base64/Base64URL, and hex lineage.
   Status: complete for extracted HTTP bodies and URL-form fields.
 - Explainable candidate normalization, ranking, and deduplication.
-  Status: known-format candidates complete; broader triage/ranking remains.
+  Status: known-format candidates complete; broader triage/ranking and stable
+  transaction/stream query surfaces remain.
 
 ## M3 - FTP, Telnet, files, and unknown triage (pending, estimate 4 days)
 

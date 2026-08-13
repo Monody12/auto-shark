@@ -324,7 +324,9 @@ def carve_project(
             "e.protocol_message_id,e.transaction_id,e.frame_start,e.frame_end,e.direction,"
             "e.byte_offset,e.byte_length,e.blob_id,b.relative_path,b.byte_length AS blob_length "
             "FROM evidence e JOIN blob b ON b.id=e.blob_id "
-            "WHERE e.source_kind IN ('http-body','transform-output','ftp-data','tcp-stream') "
+            "WHERE (e.source_kind IN ('http-body','transform-output','ftp-data') "
+            "OR (e.source_kind='tcp-stream' AND EXISTS ("
+            "SELECT 1 FROM tcp_reconstruction tr WHERE tr.evidence_id=e.id))) "
             "AND coalesce(e.byte_offset,0)=0 AND e.byte_length=b.byte_length "
             "ORDER BY e.id"
         ).fetchall()
