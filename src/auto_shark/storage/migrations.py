@@ -226,4 +226,35 @@ MIGRATIONS = (
     CREATE INDEX idx_evidence_frames ON evidence(capture_id, frame_start, frame_end);
     CREATE INDEX idx_candidate_rank ON candidate(rank_score DESC, confidence DESC);
     """,
+    """
+    CREATE TABLE http_message (
+        protocol_message_id INTEGER PRIMARY KEY
+            REFERENCES protocol_message(id) ON DELETE CASCADE,
+        method TEXT,
+        uri TEXT,
+        full_uri TEXT,
+        host TEXT,
+        response_code INTEGER,
+        response_phrase TEXT,
+        response_in_frame INTEGER,
+        request_in_frame INTEGER,
+        content_length INTEGER CHECK (content_length IS NULL OR content_length >= 0),
+        content_type TEXT
+    );
+
+    CREATE TABLE transaction_message (
+        transaction_id INTEGER NOT NULL
+            REFERENCES transaction_record(id) ON DELETE CASCADE,
+        protocol_message_id INTEGER NOT NULL
+            REFERENCES protocol_message(id) ON DELETE CASCADE,
+        role TEXT NOT NULL CHECK (role IN ('request', 'response', 'extra_response')),
+        ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+        PRIMARY KEY (transaction_id, protocol_message_id),
+        UNIQUE (transaction_id, role, ordinal)
+    ) WITHOUT ROWID;
+
+    CREATE INDEX idx_http_response_in ON http_message(response_in_frame);
+    CREATE INDEX idx_http_request_in ON http_message(request_in_frame);
+    CREATE INDEX idx_http_uri ON http_message(uri);
+    """,
 )

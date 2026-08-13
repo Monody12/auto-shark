@@ -22,7 +22,9 @@ all exit criteria are verified and recorded in `PROJECT_STATE.md`.
 ## M2 - HTTP/TCP and search pipeline (active, estimate 5 days)
 
 - Streaming TShark metadata ingestion and persisted tool-run provenance.
+  Status: complete for HTTP-over-TCP metadata.
 - Precise HTTP request/response pairing across keep-alive connections.
+  Status: complete, including unmatched/orphan/extra-response representation.
 - On-demand bounded body extraction and TCP reconstruction.
 - Raw/text/field search plus URL, Base64/Base64URL, and hex lineage.
 - Explainable candidate normalization, ranking, and deduplication.

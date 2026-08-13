@@ -9,6 +9,19 @@ one PCAP/PCAPNG capture, builds an on-disk index with TShark, ranks explainable
 flag candidates, reconstructs HTTP/TCP/FTP/Telnet evidence, and exports an
 offline report without executing captured content.
 
+The current runnable checkpoint can probe TShark, create/reopen a machine-local
+project, and persist/precisely pair HTTP-over-TCP metadata:
+
+```powershell
+uv run auto-shark probe --tshark C:\path\to\tshark.exe
+uv run auto-shark analyze capture.pcapng `
+  --project "$env:LOCALAPPDATA\AutoShark\projects\capture.auto-shark" `
+  --tshark C:\path\to\tshark.exe
+```
+
+Body extraction, decoding, candidate ranking, and reports are still active M2+
+work; consult `PROJECT_STATE.md` rather than assuming they are implemented.
+
 ## Product boundaries
 
 - Offline captures only in v1; no live capture or multi-challenge batch mode.
@@ -46,4 +59,3 @@ for example `%LOCALAPPDATA%\AutoShark\projects`.
 - [Roadmap](docs/ROADMAP.md)
 - [Recovery protocol](docs/RECOVERY.md)
 - [Acceptance captures](docs/ACCEPTANCE_SAMPLES.md)
-

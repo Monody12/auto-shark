@@ -10,6 +10,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Optional
 
+from .analysis import analyze_http
 from .config import Settings
 from .engines.tshark import find_tshark, probe_tshark
 from .project import create_project, inspect_project
@@ -23,6 +24,12 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--version", action="version", version="%(prog)s " + __version__)
     commands = parser.add_subparsers(dest="command")
+
+    analyze = commands.add_parser("analyze", help="create and analyze a capture project")
+    analyze.add_argument("capture", type=Path)
+    analyze.add_argument("--project", required=True, type=Path)
+    analyze.add_argument("--tshark", type=Path, help="explicit path to tshark executable")
+    analyze.add_argument("--uri", help="also count transactions with this exact request URI")
 
     probe = commands.add_parser("probe", help="probe TShark capabilities")
     probe.add_argument("--tshark", type=Path, help="explicit path to tshark executable")
@@ -59,6 +66,24 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         parser.print_help()
         return 0
     try:
+        if args.command == "analyze":
+            settings = Settings.from_environment()
+            executable = find_tshark(args.tshark or settings.tshark_path)
+            if executable is None:
+                print(
+                    "TShark was not found. Use --tshark or AUTO_SHARK_TSHARK.",
+                    file=sys.stderr,
+                )
+                return 2
+            print(
+                analyze_http(
+                    args.capture,
+                    args.project,
+                    executable,
+                    matching_uri=args.uri,
+                ).to_json()
+            )
+            return 0
         if args.command == "probe":
             settings = Settings.from_environment()
             executable = find_tshark(args.tshark or settings.tshark_path)
