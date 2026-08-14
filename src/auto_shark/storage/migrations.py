@@ -696,4 +696,278 @@ MIGRATIONS = (
     CREATE INDEX idx_telnet_record_range
         ON telnet_record(reconstruction_id,stream_offset,byte_length);
     """,
+    """
+    CREATE TABLE capture_inventory_run (
+        id INTEGER PRIMARY KEY,
+        inventory_run_id TEXT NOT NULL UNIQUE,
+        capture_id INTEGER NOT NULL REFERENCES capture(id) ON DELETE CASCADE,
+        tool_run_id INTEGER NOT NULL REFERENCES tool_run(id) ON DELETE RESTRICT,
+        policy_json TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('completed','partial','failed','budget-limited')),
+        processed_frames INTEGER NOT NULL CHECK (processed_frames >= 0),
+        skipped_frames INTEGER NOT NULL CHECK (skipped_frames >= 0),
+        skipped_conversations INTEGER NOT NULL CHECK (skipped_conversations >= 0),
+        skipped_protocol_labels INTEGER NOT NULL CHECK (skipped_protocol_labels >= 0),
+        started_at TEXT NOT NULL,
+        ended_at TEXT,
+        UNIQUE (capture_id, tool_run_id)
+    );
+
+    CREATE TABLE protocol_observation (
+        id INTEGER PRIMARY KEY,
+        observation_id TEXT NOT NULL UNIQUE,
+        capture_id INTEGER NOT NULL REFERENCES capture(id) ON DELETE CASCADE,
+        protocol_label TEXT NOT NULL,
+        frame_count INTEGER NOT NULL CHECK (frame_count >= 0),
+        first_frame INTEGER,
+        last_frame INTEGER,
+        inventory_run_id INTEGER NOT NULL REFERENCES capture_inventory_run(id) ON DELETE RESTRICT,
+        updated_at TEXT NOT NULL,
+        UNIQUE (capture_id, protocol_label)
+    );
+
+    CREATE TABLE conversation_profile (
+        id INTEGER PRIMARY KEY,
+        profile_id TEXT NOT NULL UNIQUE,
+        capture_id INTEGER NOT NULL REFERENCES capture(id) ON DELETE CASCADE,
+        protocol TEXT NOT NULL CHECK (protocol IN ('tcp','udp')),
+        stream_index INTEGER NOT NULL CHECK (stream_index >= 0),
+        endpoint_a TEXT,
+        endpoint_b TEXT,
+        initiator_endpoint TEXT,
+        responder_endpoint TEXT,
+        first_frame INTEGER,
+        last_frame INTEGER,
+        first_time TEXT,
+        last_time TEXT,
+        frame_count INTEGER NOT NULL CHECK (frame_count >= 0),
+        captured_bytes INTEGER NOT NULL CHECK (captured_bytes >= 0),
+        wire_bytes INTEGER NOT NULL CHECK (wire_bytes >= 0),
+        payload_bytes INTEGER NOT NULL CHECK (payload_bytes >= 0),
+        protocol_labels_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE (capture_id, protocol, stream_index)
+    );
+
+    CREATE TABLE conversation_profile_run (
+        profile_id INTEGER NOT NULL REFERENCES conversation_profile(id) ON DELETE CASCADE,
+        inventory_run_id INTEGER NOT NULL REFERENCES capture_inventory_run(id) ON DELETE CASCADE,
+        PRIMARY KEY (profile_id, inventory_run_id)
+    ) WITHOUT ROWID;
+
+    CREATE TABLE inventory_skip (
+        id INTEGER PRIMARY KEY,
+        inventory_run_id INTEGER NOT NULL REFERENCES capture_inventory_run(id) ON DELETE CASCADE,
+        scope TEXT NOT NULL CHECK (scope IN ('frame','conversation','protocol-label')),
+        frame_number INTEGER,
+        protocol TEXT,
+        stream_index INTEGER,
+        reason TEXT NOT NULL,
+        count INTEGER NOT NULL CHECK (count > 0),
+        detail_json TEXT NOT NULL,
+        UNIQUE (inventory_run_id, scope, frame_number, protocol, stream_index, reason)
+    );
+
+    CREATE TABLE analysis_coverage (
+        id INTEGER PRIMARY KEY,
+        coverage_id TEXT NOT NULL UNIQUE,
+        capture_id INTEGER NOT NULL REFERENCES capture(id) ON DELETE CASCADE,
+        subject_kind TEXT NOT NULL CHECK (subject_kind IN ('protocol','conversation')),
+        subject_id TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (
+            status IN (
+                'complete','partial','not-run','unavailable','failed','budget-limited'
+            )
+        ),
+        detail_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE (capture_id, subject_kind, subject_id)
+    );
+
+    CREATE TABLE multipart_part (
+        id INTEGER PRIMARY KEY,
+        part_id TEXT NOT NULL UNIQUE,
+        protocol_message_id INTEGER NOT NULL
+            REFERENCES protocol_message(id) ON DELETE CASCADE,
+        tool_run_id INTEGER NOT NULL REFERENCES tool_run(id) ON DELETE RESTRICT,
+        ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+        field_name TEXT,
+        filename TEXT,
+        declared_media_type TEXT,
+        status TEXT NOT NULL CHECK (status IN ('indexed','resolved','unresolved')),
+        detail_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE (protocol_message_id, ordinal)
+    );
+
+    CREATE TABLE multipart_part_artifact (
+        id INTEGER PRIMARY KEY,
+        part_id INTEGER NOT NULL REFERENCES multipart_part(id) ON DELETE CASCADE,
+        artifact_id INTEGER REFERENCES artifact(id) ON DELETE CASCADE,
+        carve_id INTEGER REFERENCES file_carve(id) ON DELETE SET NULL,
+        role TEXT NOT NULL CHECK (role IN ('matched','type-mismatch','unresolved')),
+        detail_json TEXT NOT NULL,
+        UNIQUE (part_id, artifact_id, role)
+    );
+
+    CREATE TABLE finding_run (
+        finding_id INTEGER NOT NULL REFERENCES finding(id) ON DELETE CASCADE,
+        tool_run_id INTEGER NOT NULL REFERENCES tool_run(id) ON DELETE CASCADE,
+        PRIMARY KEY (finding_id, tool_run_id)
+    ) WITHOUT ROWID;
+
+    CREATE TABLE manual_queue_run (
+        id INTEGER PRIMARY KEY,
+        queue_run_id TEXT NOT NULL UNIQUE,
+        capture_id INTEGER NOT NULL REFERENCES capture(id) ON DELETE CASCADE,
+        inventory_run_id INTEGER REFERENCES capture_inventory_run(id) ON DELETE SET NULL,
+        rule_version TEXT NOT NULL,
+        policy_json TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('completed','partial','failed','budget-limited')),
+        created_count INTEGER NOT NULL CHECK (created_count >= 0),
+        updated_count INTEGER NOT NULL CHECK (updated_count >= 0),
+        skipped_count INTEGER NOT NULL CHECK (skipped_count >= 0),
+        started_at TEXT NOT NULL,
+        ended_at TEXT
+    );
+
+    CREATE TABLE manual_task (
+        id INTEGER PRIMARY KEY,
+        task_id TEXT NOT NULL UNIQUE,
+        capture_id INTEGER NOT NULL REFERENCES capture(id) ON DELETE CASCADE,
+        subject_kind TEXT NOT NULL,
+        subject_id TEXT NOT NULL,
+        task_kind TEXT NOT NULL,
+        suggested_priority INTEGER NOT NULL CHECK (
+            suggested_priority >= 0 AND suggested_priority <= 100
+        ),
+        state TEXT NOT NULL CHECK (
+            state IN ('open','in-progress','resolved','dismissed')
+        ),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE (capture_id, subject_kind, subject_id, task_kind)
+    );
+
+    CREATE TABLE manual_task_signal (
+        id INTEGER PRIMARY KEY,
+        task_id INTEGER NOT NULL REFERENCES manual_task(id) ON DELETE CASCADE,
+        queue_run_id INTEGER NOT NULL REFERENCES manual_queue_run(id) ON DELETE CASCADE,
+        rule_name TEXT NOT NULL,
+        rule_version TEXT NOT NULL,
+        score INTEGER NOT NULL CHECK (score >= 0 AND score <= 100),
+        detail_json TEXT NOT NULL,
+        UNIQUE (task_id, rule_name, rule_version)
+    );
+
+    CREATE TABLE manual_task_evidence (
+        task_id INTEGER NOT NULL REFERENCES manual_task(id) ON DELETE CASCADE,
+        evidence_id INTEGER NOT NULL REFERENCES evidence(id) ON DELETE CASCADE,
+        role TEXT NOT NULL,
+        PRIMARY KEY (task_id, evidence_id, role)
+    ) WITHOUT ROWID;
+
+    CREATE INDEX idx_inventory_protocol ON protocol_observation(capture_id, protocol_label);
+    CREATE INDEX idx_inventory_conversation
+        ON conversation_profile(capture_id, protocol, stream_index);
+    CREATE INDEX idx_coverage_status ON analysis_coverage(capture_id, status);
+    CREATE INDEX idx_multipart_message ON multipart_part(protocol_message_id, ordinal);
+    CREATE INDEX idx_manual_task_queue
+        ON manual_task(state, suggested_priority DESC, task_id);
+    CREATE INDEX idx_manual_task_subject
+        ON manual_task(capture_id, subject_kind, subject_id);
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS multipart_part (
+        id INTEGER PRIMARY KEY,
+        part_id TEXT NOT NULL UNIQUE,
+        protocol_message_id INTEGER NOT NULL
+            REFERENCES protocol_message(id) ON DELETE CASCADE,
+        tool_run_id INTEGER NOT NULL REFERENCES tool_run(id) ON DELETE RESTRICT,
+        ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+        field_name TEXT,
+        filename TEXT,
+        declared_media_type TEXT,
+        status TEXT NOT NULL CHECK (status IN ('indexed','resolved','unresolved')),
+        detail_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE (protocol_message_id, ordinal)
+    );
+
+    CREATE TABLE IF NOT EXISTS multipart_part_artifact (
+        id INTEGER PRIMARY KEY,
+        part_id INTEGER NOT NULL REFERENCES multipart_part(id) ON DELETE CASCADE,
+        artifact_id INTEGER REFERENCES artifact(id) ON DELETE CASCADE,
+        carve_id INTEGER REFERENCES file_carve(id) ON DELETE SET NULL,
+        role TEXT NOT NULL CHECK (role IN ('matched','type-mismatch','unresolved')),
+        detail_json TEXT NOT NULL,
+        UNIQUE (part_id, artifact_id, role)
+    );
+
+    CREATE TABLE IF NOT EXISTS finding_run (
+        finding_id INTEGER NOT NULL REFERENCES finding(id) ON DELETE CASCADE,
+        tool_run_id INTEGER NOT NULL REFERENCES tool_run(id) ON DELETE CASCADE,
+        PRIMARY KEY (finding_id, tool_run_id)
+    ) WITHOUT ROWID;
+
+    CREATE TABLE IF NOT EXISTS manual_queue_run (
+        id INTEGER PRIMARY KEY,
+        queue_run_id TEXT NOT NULL UNIQUE,
+        capture_id INTEGER NOT NULL REFERENCES capture(id) ON DELETE CASCADE,
+        inventory_run_id INTEGER REFERENCES capture_inventory_run(id) ON DELETE SET NULL,
+        rule_version TEXT NOT NULL,
+        policy_json TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (
+            status IN ('completed','partial','failed','budget-limited')
+        ),
+        created_count INTEGER NOT NULL CHECK (created_count >= 0),
+        updated_count INTEGER NOT NULL CHECK (updated_count >= 0),
+        skipped_count INTEGER NOT NULL CHECK (skipped_count >= 0),
+        started_at TEXT NOT NULL,
+        ended_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS manual_task (
+        id INTEGER PRIMARY KEY,
+        task_id TEXT NOT NULL UNIQUE,
+        capture_id INTEGER NOT NULL REFERENCES capture(id) ON DELETE CASCADE,
+        subject_kind TEXT NOT NULL,
+        subject_id TEXT NOT NULL,
+        task_kind TEXT NOT NULL,
+        suggested_priority INTEGER NOT NULL CHECK (
+            suggested_priority >= 0 AND suggested_priority <= 100
+        ),
+        state TEXT NOT NULL CHECK (
+            state IN ('open','in-progress','resolved','dismissed')
+        ),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE (capture_id, subject_kind, subject_id, task_kind)
+    );
+
+    CREATE TABLE IF NOT EXISTS manual_task_signal (
+        id INTEGER PRIMARY KEY,
+        task_id INTEGER NOT NULL REFERENCES manual_task(id) ON DELETE CASCADE,
+        queue_run_id INTEGER NOT NULL REFERENCES manual_queue_run(id) ON DELETE CASCADE,
+        rule_name TEXT NOT NULL,
+        rule_version TEXT NOT NULL,
+        score INTEGER NOT NULL CHECK (score >= 0 AND score <= 100),
+        detail_json TEXT NOT NULL,
+        UNIQUE (task_id, rule_name, rule_version)
+    );
+
+    CREATE TABLE IF NOT EXISTS manual_task_evidence (
+        task_id INTEGER NOT NULL REFERENCES manual_task(id) ON DELETE CASCADE,
+        evidence_id INTEGER NOT NULL REFERENCES evidence(id) ON DELETE CASCADE,
+        role TEXT NOT NULL,
+        PRIMARY KEY (task_id, evidence_id, role)
+    ) WITHOUT ROWID;
+
+    CREATE INDEX IF NOT EXISTS idx_multipart_message
+        ON multipart_part(protocol_message_id, ordinal);
+    CREATE INDEX IF NOT EXISTS idx_manual_task_queue
+        ON manual_task(state, suggested_priority DESC, task_id);
+    CREATE INDEX IF NOT EXISTS idx_manual_task_subject
+        ON manual_task(capture_id, subject_kind, subject_id);
+    """,
 )

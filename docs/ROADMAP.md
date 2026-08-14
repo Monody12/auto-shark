@@ -50,6 +50,10 @@ all exit criteria are verified and recorded in `PROJECT_STATE.md`.
   Status: reusable bounded carving is complete for HTTP/transform evidence;
   general protocol correlation, type mismatch, and manual triage remain M3.
 - Protocol/conversation summary and manual-analysis queue.
+  Status: complete with schema 11 capture inventory, schema 12 compatibility
+  repair, bounded protocol/conversation profiles, explicit coverage states,
+  conservative multipart correlation, HTTP status/body contradiction findings,
+  and persistent idempotent manual queue plus summary/queue/state CLI queries.
 
 ## M4 - CTF detectors and CLI acceptance (pending, estimate 4 days)
 

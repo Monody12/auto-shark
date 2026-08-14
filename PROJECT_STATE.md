@@ -26,6 +26,11 @@ read-only sample inspection. Its schema 10, RFC 854 parsing, exact byte/source
 coverage, bounded query, and verification contract is recorded in
 `docs/M3_SLICE2_IMPLEMENTATION.md`. That slice is now complete.
 
+The user approved the remaining M3 protocol/conversation summary, multipart
+finding, and persistent manual-analysis queue scope. Its schema 11, status
+vocabulary, bounded CLI, queue preservation rules, and five-sample acceptance
+contract are recorded in `docs/M3_SLICE3_IMPLEMENTATION.md`.
+
 The user approved the detailed M2 slice 5 implementation plan. Its durable
 contract, revalidated sample facts, and verification gates are recorded in
 `docs/M2_SLICE5_IMPLEMENTATION.md`.
@@ -410,6 +415,60 @@ Environment paths below are local evidence, not production defaults:
   dialogue, 44 records, 54 source mappings, three relations, zero skips, and
   one candidate. No answer file or captured artifact was opened, listed,
   unpacked, rendered, decrypted, or executed.
+- M3 slice 3A implements schema 11 and bounded payload-free TShark capture
+  inventory. Stable protocol observations and TCP/UDP conversation profiles
+  retain per-run provenance, explicit frame/label/conversation skips, IPv4 and
+  IPv6 endpoints, byte/frame totals, and initial-SYN TCP roles without guessing
+  UDP roles. Coverage uses distinct complete, partial, not-run, unavailable,
+  failed, and budget-limited states and prefers current analyzer results over
+  protocol labels. Ruff and the full Python 3.11 suite pass with 128 tests.
+- Two real `index-summary` runs against the clean Telnet schema 11 project each
+  processed 59 frames and produced five protocol observations, one TCP stream
+  profile, and 310 payload bytes. The SYN-proven endpoints are
+  `192.168.221.128:1146` to `192.168.221.164:23`; Telnet coverage remains
+  complete from the current 44-record parser result. Stable profile counts did
+  not grow, while two inventory/run links preserve provenance. SQLite
+  integrity, foreign keys, and the empty jobs directory pass.
+- M3 slice 3B implements header-only multipart metadata, conservative unique
+  part-to-carve correlation, declared/detected type mismatch findings, and a
+  bounded static success-semantic scan limited to complete nontruncated HTTP
+  5xx response bodies. Synthetic tests cover multi-part ambiguity, unique
+  mismatch, exact result ranges, incomplete-body skipping, and idempotent
+  business rows. Focused Ruff and 13 tests pass.
+- The existing multipart project was migrated to schema 11 and frame 260 was
+  extracted through the bounded HTTP body workflow: 764 complete bytes,
+  SHA-256 `4793d6d43b282bd3215d16f85a8dba8f147ce583478f8c901aae154d6fa7bdea`.
+  Two repeated header-only multipart/finding runs keep two stable parts: frame
+  233 `upfile` / `flag.jpg` / `image/jpeg` uniquely matches the current JPEG
+  carve, while frame 54 remains explicitly unresolved because it has no carve.
+  Frame 260 HTTP 500 creates one stable contradiction finding with exact body
+  range `[634,648)` and text `upload success`; the second run only adds
+  finding-run provenance. All three project blobs rehash, integrity and foreign
+  keys pass, and jobs remains empty. No artifact was opened or rendered.
+- M3 slice 3C implements schema 11 queue contracts plus schema 12 append-only
+  repair for projects materialized during the earlier 3A checkpoint. Stable
+  manual tasks deduplicate multiple signals by capture subject, rebuilds replace
+  only automatic signals and evidence links, and manual state, review marks,
+  notes, and artifact review state are preserved. The initial rank rules cover
+  rank-100 candidates, analyzer/HTTP contradictions, TCP conflict or partial
+  results, unreviewed RAR/ZIP/executable artifacts, trailing/unmatched/orphan
+  HTTP, and bounded unsupported protocols. Summary, manual-queue, and
+  manual-task CLI queries support independent pagination/filter/budget limits.
+- Final Windows CPython 3.11 verification passes Ruff and 137 tests at 86
+  percent total coverage; CPython 3.9 passes the same 137 tests. `uv build`
+  succeeds and the wheel contains `inventory.py`, `protocols/inventory.py`,
+  `protocols/multipart.py`, `findings.py`, `manual_queue.py`, and `queries.py`.
+- All five clean acceptance runtime projects ran the complete
+  inventory -> multipart/findings -> manual queue workflow twice. Stable
+  current rows are: Telnet 59 frames/one TCP profile/310 payload bytes/one
+  rank-100 task; HTTP form 356 frames/36 profiles/15 tasks; FTP 301 frames/90
+  profiles/one unreviewed RAR represented in eight queue signals; multipart
+  335 frames/22 profiles/two parts/one contradiction finding/14 tasks; and
+  WebShell 2,139 frames/18 profiles/eight tasks. The second run adds only
+  inventory, finding-run, and queue-run provenance; current summary counts stay
+  stable. Four projects rehash every Blob successfully. The WebShell runtime
+  retains one pre-existing Windows-unopenable historical Blob path in its
+  database; it is recorded as residual machine-local risk and was not changed.
 
 ## Active decisions
 
@@ -461,7 +520,7 @@ Environment paths below are local evidence, not production defaults:
 
 ## Next executable step
 
-Plan and contract the next M3 slice before implementation: bounded protocol and
-conversation summary plus a persistent manual-analysis queue. Reuse current
-HTTP/TCP/FTP/Telnet/file records, distinguish unavailable/partial analyzers,
-and do not duplicate payload bytes or collapse evidence-specific review state.
+Plan and contract M4 from `docs/ROADMAP.md`: known/unknown flag detectors,
+SQL-injection behavior reconstruction, and the WebShell operation timeline.
+Reuse the schema 12 coverage, findings, and manual queue without reading answer
+files or opening captured artifacts.

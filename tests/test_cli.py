@@ -2,6 +2,7 @@ import json
 
 from auto_shark import cli
 from auto_shark.ftp import FtpIndexSummary
+from auto_shark.inventory import InventorySummary
 from auto_shark.queries import TelnetQueryPage
 from auto_shark.telnet import TelnetIndexSummary
 from auto_shark.triage import TriageSummary
@@ -264,3 +265,58 @@ def test_telnet_dialogues_cli_forwards_query_limits(monkeypatch, capsys, tmp_pat
     assert json.loads(capsys.readouterr().out)["schema_version"] == (
         "auto-shark.telnet-dialogues/v1"
     )
+
+
+def test_index_summary_cli_forwards_inventory_limits(monkeypatch, capsys, tmp_path) -> None:
+    project = tmp_path / "case.auto-shark"
+    executable = tmp_path / "tshark.exe"
+    executable.write_bytes(b"")
+    observed = {}
+    monkeypatch.setattr(cli, "find_tshark", lambda _: executable)
+
+    def fake_index(project_path, tshark_path, **limits):
+        observed.update(limits)
+        assert project_path == project
+        assert tshark_path == executable
+        return InventorySummary(
+            project=str(project),
+            schema_version="auto-shark.summary/v1",
+            inventory_run_id="run",
+            status="completed",
+            processed_frames=3,
+            skipped_frames=0,
+            skipped_conversations=0,
+            skipped_protocol_labels=0,
+            protocol_observations=4,
+            conversation_profiles=2,
+            coverage={"not-run": 6},
+        )
+
+    monkeypatch.setattr(cli, "index_summary", fake_index)
+    result = cli.main(
+        [
+            "index-summary",
+            str(project),
+            "--tshark",
+            str(executable),
+            "--max-frames",
+            "11",
+            "--max-protocol-labels",
+            "12",
+            "--max-conversations",
+            "13",
+        ]
+    )
+    assert result == 0
+    assert observed == {
+        "max_frames": 11,
+        "max_protocol_labels": 12,
+        "max_conversations": 13,
+        "max_parts": 10_000,
+        "max_body_scan_bytes": 4 * 1024 * 1024,
+        "max_tasks": 10_000,
+        "max_signals": 50_000,
+        "max_evidence_links": 100_000,
+        "max_unsupported_tasks": 25,
+    }
+    assert json.loads(capsys.readouterr().out)["schema_version"] == "auto-shark.summary/v1"

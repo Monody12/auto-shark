@@ -16,9 +16,17 @@ from .config import Settings
 from .engines.tshark import find_tshark, probe_tshark
 from .files.carve import carve_project
 from .ftp import index_ftp
+from .inventory import index_summary
+from .manual_queue import rebuild_manual_queue, update_manual_task_state
 from .pipeline import scan_project
 from .project import create_project, inspect_project
-from .queries import query_streams, query_telnet_dialogues, query_transactions
+from .queries import (
+    query_manual_queue,
+    query_streams,
+    query_summary,
+    query_telnet_dialogues,
+    query_transactions,
+)
 from .tcp import reconstruct_tcp_stream
 from .telnet import index_telnet
 from .triage import triage_project
@@ -135,6 +143,53 @@ def _parser() -> argparse.ArgumentParser:
     dialogues.add_argument("--max-relations", type=int, default=10_000)
     dialogues.add_argument("--max-candidates", type=int, default=10_000)
 
+    inventory = commands.add_parser(
+        "index-summary", help="index bounded capture and conversation summaries"
+    )
+    inventory.add_argument("project", type=Path)
+    inventory.add_argument("--tshark", type=Path, help="explicit path to tshark executable")
+    inventory.add_argument("--max-frames", type=int, default=100_000)
+    inventory.add_argument("--max-protocol-labels", type=int, default=256)
+    inventory.add_argument("--max-conversations", type=int, default=10_000)
+    inventory.add_argument("--max-parts", type=int, default=10_000)
+    inventory.add_argument("--max-body-scan-bytes", type=int, default=4 * 1024 * 1024)
+    inventory.add_argument("--max-tasks", type=int, default=10_000)
+    inventory.add_argument("--max-signals", type=int, default=50_000)
+    inventory.add_argument("--max-evidence-links", type=int, default=100_000)
+    inventory.add_argument("--max-unsupported-tasks", type=int, default=25)
+
+    summary = commands.add_parser("summary", help="query bounded capture summaries")
+    summary.add_argument("project", type=Path)
+    summary.add_argument("--protocol-offset", type=int, default=0)
+    summary.add_argument("--protocol-limit", type=int, default=100)
+    summary.add_argument("--conversation-offset", type=int, default=0)
+    summary.add_argument("--conversation-limit", type=int, default=100)
+
+    queue = commands.add_parser("manual-queue", help="query persistent manual-analysis tasks")
+    queue.add_argument("project", type=Path)
+    queue.add_argument("--rebuild", action="store_true")
+    queue.add_argument("--state")
+    queue.add_argument("--kind")
+    queue.add_argument("--min-priority", type=int, default=0)
+    queue.add_argument("--subject-kind")
+    queue.add_argument("--subject-id")
+    queue.add_argument("--offset", type=int, default=0)
+    queue.add_argument("--limit", type=int, default=100)
+    queue.add_argument("--max-signals", type=int, default=1000)
+    queue.add_argument("--max-evidence-links", type=int, default=1000)
+    queue.add_argument("--max-detail-bytes", type=int, default=4096)
+    queue.add_argument("--max-tasks", type=int, default=10_000)
+    queue.add_argument("--max-unsupported-tasks", type=int, default=25)
+
+    task = commands.add_parser("manual-task", help="update one manual-analysis task state")
+    task.add_argument("project", type=Path)
+    task.add_argument("task_id")
+    task.add_argument(
+        "--state",
+        required=True,
+        choices=("open", "in-progress", "resolved", "dismissed"),
+    )
+
     probe = commands.add_parser("probe", help="probe TShark capabilities")
     probe.add_argument("--tshark", type=Path, help="explicit path to tshark executable")
     probe.add_argument("--json", action="store_true", help="emit the complete JSON profile")
@@ -170,6 +225,77 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         parser.print_help()
         return 0
     try:
+        if args.command == "manual-task":
+            print(
+                json.dumps(
+                    update_manual_task_state(args.project, args.task_id, args.state),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    indent=2,
+                )
+            )
+            return 0
+        if args.command == "manual-queue":
+            if args.rebuild:
+                rebuild_manual_queue(
+                    args.project,
+                    max_tasks=args.max_tasks,
+                    max_signals=args.max_signals,
+                    max_evidence_links=args.max_evidence_links,
+                    max_unsupported_tasks=args.max_unsupported_tasks,
+                )
+            print(
+                query_manual_queue(
+                    args.project,
+                    state=args.state,
+                    kind=args.kind,
+                    min_priority=args.min_priority,
+                    subject_kind=args.subject_kind,
+                    subject_id=args.subject_id,
+                    offset=args.offset,
+                    limit=args.limit,
+                    max_signals=args.max_signals,
+                    max_evidence_links=args.max_evidence_links,
+                    max_detail_bytes=args.max_detail_bytes,
+                ).to_json()
+            )
+            return 0
+        if args.command == "summary":
+            print(
+                query_summary(
+                    args.project,
+                    protocol_offset=args.protocol_offset,
+                    protocol_limit=args.protocol_limit,
+                    conversation_offset=args.conversation_offset,
+                    conversation_limit=args.conversation_limit,
+                ).to_json()
+            )
+            return 0
+        if args.command == "index-summary":
+            settings = Settings.from_environment()
+            executable = find_tshark(args.tshark or settings.tshark_path)
+            if executable is None:
+                print(
+                    "TShark was not found. Use --tshark or AUTO_SHARK_TSHARK.",
+                    file=sys.stderr,
+                )
+                return 2
+            print(
+                index_summary(
+                    args.project,
+                    executable,
+                    max_frames=args.max_frames,
+                    max_protocol_labels=args.max_protocol_labels,
+                    max_conversations=args.max_conversations,
+                    max_parts=args.max_parts,
+                    max_body_scan_bytes=args.max_body_scan_bytes,
+                    max_tasks=args.max_tasks,
+                    max_signals=args.max_signals,
+                    max_evidence_links=args.max_evidence_links,
+                    max_unsupported_tasks=args.max_unsupported_tasks,
+                ).to_json()
+            )
+            return 0
         if args.command == "index-telnet":
             settings = Settings.from_environment()
             executable = find_tshark(args.tshark or settings.tshark_path)

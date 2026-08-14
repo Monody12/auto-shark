@@ -49,6 +49,43 @@ class TelnetQueryPage:
         return json.dumps(asdict(self), ensure_ascii=False, sort_keys=True, indent=2)
 
 
+@dataclass(frozen=True)
+class SummaryQueryPage:
+    schema_version: str
+    project: str
+    protocol_offset: int
+    protocol_limit: int
+    conversation_offset: int
+    conversation_limit: int
+    protocol_total: int
+    conversation_total: int
+    coverage: dict[str, int]
+    protocols: tuple[dict[str, object], ...]
+    conversations: tuple[dict[str, object], ...]
+
+    def to_json(self) -> str:
+        return json.dumps(asdict(self), ensure_ascii=False, sort_keys=True, indent=2)
+
+
+@dataclass(frozen=True)
+class ManualQueuePage:
+    schema_version: str
+    project: str
+    offset: int
+    limit: int
+    total: int
+    count: int
+    max_signals: int
+    max_evidence_links: int
+    max_detail_bytes: int
+    signals_returned: int
+    evidence_links_returned: int
+    items: tuple[dict[str, object], ...]
+
+    def to_json(self) -> str:
+        return json.dumps(asdict(self), ensure_ascii=False, sort_keys=True, indent=2)
+
+
 def _validate_page(offset: int, limit: int) -> None:
     if offset < 0:
         raise ValueError("query offset cannot be negative")
@@ -544,5 +581,233 @@ def query_telnet_dialogues(
         max_relations=max_relations,
         max_candidates=max_candidates,
         preview_bytes=preview_bytes,
+        items=tuple(items),
+    )
+
+
+def query_summary(
+    project_path: Path,
+    *,
+    protocol_offset: int = 0,
+    protocol_limit: int = DEFAULT_PAGE_LIMIT,
+    conversation_offset: int = 0,
+    conversation_limit: int = DEFAULT_PAGE_LIMIT,
+) -> SummaryQueryPage:
+    if min(protocol_offset, conversation_offset) < 0:
+        raise ValueError("summary offsets cannot be negative")
+    if not 0 < protocol_limit <= MAX_PAGE_LIMIT:
+        raise ValueError("protocol limit must be between 1 and 1000")
+    if not 0 < conversation_limit <= MAX_PAGE_LIMIT:
+        raise ValueError("conversation limit must be between 1 and 1000")
+    project = inspect_project(project_path)
+    database = Database(project.root / "project.sqlite")
+    with database.connect() as connection:
+        capture_id = int(
+            connection.execute(
+                "SELECT id FROM capture WHERE sha256=?", (project.capture_sha256,)
+            ).fetchone()[0]
+        )
+        protocol_total = int(
+            connection.execute(
+                "SELECT count(*) FROM protocol_observation WHERE capture_id=?",
+                (capture_id,),
+            ).fetchone()[0]
+        )
+        conversation_total = int(
+            connection.execute(
+                "SELECT count(*) FROM conversation_profile WHERE capture_id=?",
+                (capture_id,),
+            ).fetchone()[0]
+        )
+        protocols = tuple(
+            dict(row)
+            for row in connection.execute(
+                "SELECT po.observation_id,po.protocol_label,po.frame_count,"
+                "po.first_frame,po.last_frame,ac.status coverage_status "
+                "FROM protocol_observation po LEFT JOIN analysis_coverage ac "
+                "ON ac.capture_id=po.capture_id AND ac.subject_kind='protocol' "
+                "AND ac.subject_id=po.observation_id WHERE po.capture_id=? "
+                "ORDER BY po.frame_count DESC,po.protocol_label LIMIT ? OFFSET ?",
+                (capture_id, protocol_limit, protocol_offset),
+            )
+        )
+        conversations = tuple(
+            {
+                **dict(row),
+                "protocol_labels": json.loads(str(row["protocol_labels_json"])),
+            }
+            for row in connection.execute(
+                "SELECT cp.profile_id,cp.protocol,cp.stream_index,cp.endpoint_a,"
+                "cp.endpoint_b,cp.initiator_endpoint,cp.responder_endpoint,"
+                "cp.first_frame,cp.last_frame,cp.first_time,cp.last_time,"
+                "cp.frame_count,cp.captured_bytes,cp.wire_bytes,cp.payload_bytes,"
+                "cp.protocol_labels_json,ac.status coverage_status "
+                "FROM conversation_profile cp LEFT JOIN analysis_coverage ac "
+                "ON ac.capture_id=cp.capture_id AND ac.subject_kind='conversation' "
+                "AND ac.subject_id=cp.profile_id WHERE cp.capture_id=? "
+                "ORDER BY cp.protocol,cp.stream_index LIMIT ? OFFSET ?",
+                (capture_id, conversation_limit, conversation_offset),
+            )
+        )
+        coverage = {
+            str(row["status"]): int(row["count"])
+            for row in connection.execute(
+                "SELECT status,count(*) count FROM analysis_coverage "
+                "WHERE capture_id=? GROUP BY status ORDER BY status",
+                (capture_id,),
+            )
+        }
+    return SummaryQueryPage(
+        schema_version="auto-shark.summary/v1",
+        project=str(project.root),
+        protocol_offset=protocol_offset,
+        protocol_limit=protocol_limit,
+        conversation_offset=conversation_offset,
+        conversation_limit=conversation_limit,
+        protocol_total=protocol_total,
+        conversation_total=conversation_total,
+        coverage=coverage,
+        protocols=protocols,
+        conversations=conversations,
+    )
+
+
+def query_manual_queue(
+    project_path: Path,
+    *,
+    state: Optional[str] = None,
+    kind: Optional[str] = None,
+    min_priority: int = 0,
+    subject_kind: Optional[str] = None,
+    subject_id: Optional[str] = None,
+    offset: int = 0,
+    limit: int = DEFAULT_PAGE_LIMIT,
+    max_signals: int = 1000,
+    max_evidence_links: int = 1000,
+    max_detail_bytes: int = 4096,
+) -> ManualQueuePage:
+    if min(offset, min_priority) < 0 or min_priority > 100:
+        raise ValueError("invalid manual queue offset or minimum priority")
+    if not 0 < limit <= MAX_PAGE_LIMIT:
+        raise ValueError("manual queue limit must be between 1 and 1000")
+    if min(max_signals, max_evidence_links, max_detail_bytes) <= 0:
+        raise ValueError("manual queue auxiliary limits must be positive")
+    project = inspect_project(project_path)
+    database = Database(project.root / "project.sqlite")
+    where = ["mt.capture_id=?", "mt.suggested_priority>=?"]
+    parameters: list[object] = [None, min_priority]
+    if state is not None:
+        where.append("mt.state=?")
+        parameters.append(state)
+    if kind is not None:
+        where.append("mt.task_kind=?")
+        parameters.append(kind)
+    if subject_kind is not None:
+        where.append("mt.subject_kind=?")
+        parameters.append(subject_kind)
+    if subject_id is not None:
+        where.append("mt.subject_id=?")
+        parameters.append(subject_id)
+    clause = " AND ".join(where)
+    with database.connect() as connection:
+        capture_id = int(
+            connection.execute(
+                "SELECT id FROM capture WHERE sha256=?", (project.capture_sha256,)
+            ).fetchone()[0]
+        )
+        parameters[0] = capture_id
+        total = int(
+            connection.execute(
+                f"SELECT count(*) FROM manual_task mt WHERE {clause}", parameters
+            ).fetchone()[0]
+        )
+        rows = connection.execute(
+            "SELECT mt.id,mt.task_id,mt.subject_kind,mt.subject_id,mt.task_kind,"
+            "mt.suggested_priority,mt.state,mt.created_at,mt.updated_at "
+            f"FROM manual_task mt WHERE {clause} "
+            "ORDER BY mt.suggested_priority DESC,mt.task_id LIMIT ? OFFSET ?",
+            (*parameters, limit, offset),
+        ).fetchall()
+        signal_remaining = max_signals
+        evidence_remaining = max_evidence_links
+        items = []
+        signals_returned = evidence_returned = 0
+        for row in rows:
+            signal_total = int(
+                connection.execute(
+                    "SELECT count(*) FROM manual_task_signal WHERE task_id=?",
+                    (row["id"],),
+                ).fetchone()[0]
+            )
+            signals = []
+            if signal_remaining:
+                for signal in connection.execute(
+                    "SELECT rule_name,rule_version,score,detail_json "
+                    "FROM manual_task_signal WHERE task_id=? "
+                    "ORDER BY score DESC,rule_name LIMIT ?",
+                    (row["id"], signal_remaining),
+                ):
+                    detail_json = str(signal["detail_json"])
+                    detail_truncated = len(detail_json.encode("utf-8")) > max_detail_bytes
+                    detail = (
+                        detail_json.encode("utf-8")[:max_detail_bytes].decode(
+                            "utf-8", errors="ignore"
+                        )
+                        if detail_truncated
+                        else detail_json
+                    )
+                    signals.append(
+                        {
+                            "rule_name": signal["rule_name"],
+                            "rule_version": signal["rule_version"],
+                            "score": signal["score"],
+                            "detail_json": detail,
+                            "detail_truncated": detail_truncated,
+                        }
+                    )
+                    signal_remaining -= 1
+                    signals_returned += 1
+            evidence_total = int(
+                connection.execute(
+                    "SELECT count(*) FROM manual_task_evidence WHERE task_id=?",
+                    (row["id"],),
+                ).fetchone()[0]
+            )
+            evidence = []
+            if evidence_remaining:
+                for link in connection.execute(
+                    "SELECT e.evidence_id,mte.role FROM manual_task_evidence mte "
+                    "JOIN evidence e ON e.id=mte.evidence_id WHERE mte.task_id=? "
+                    "ORDER BY mte.role,e.evidence_id LIMIT ?",
+                    (row["id"], evidence_remaining),
+                ):
+                    evidence.append(dict(link))
+                    evidence_remaining -= 1
+                    evidence_returned += 1
+            item = dict(row)
+            item.pop("id")
+            item.update(
+                {
+                    "signal_count": signal_total,
+                    "signals": signals,
+                    "signals_truncated": len(signals) < signal_total,
+                    "evidence_count": evidence_total,
+                    "evidence": evidence,
+                    "evidence_truncated": len(evidence) < evidence_total,
+                }
+            )
+            items.append(item)
+    return ManualQueuePage(
+        schema_version="auto-shark.manual-queue/v1",
+        project=str(project.root),
+        offset=offset,
+        limit=limit,
+        total=total,
+        count=len(items),
+        max_signals=max_signals,
+        max_evidence_links=max_evidence_links,
+        max_detail_bytes=max_detail_bytes,
+        signals_returned=signals_returned,
+        evidence_links_returned=evidence_returned,
         items=tuple(items),
     )

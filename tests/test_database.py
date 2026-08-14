@@ -138,3 +138,69 @@ def test_schema_nine_database_migrates_to_telnet_schema(tmp_path) -> None:
         "telnet_record_relation",
         "telnet_parse_skip",
     }.issubset(set(database.table_names()))
+
+
+def test_schema_ten_database_migrates_to_inventory_schema(tmp_path) -> None:
+    database = Database(tmp_path / "project.sqlite")
+    database.initialize()
+    with database.connect() as connection:
+        connection.execute("PRAGMA user_version = 10")
+        for table in (
+            "manual_task_evidence",
+            "manual_task_signal",
+            "manual_task",
+            "manual_queue_run",
+            "finding_run",
+            "multipart_part_artifact",
+            "multipart_part",
+            "analysis_coverage",
+            "inventory_skip",
+            "conversation_profile_run",
+            "conversation_profile",
+            "protocol_observation",
+            "capture_inventory_run",
+        ):
+            connection.execute(f"DROP TABLE {table}")
+    database.initialize()
+    assert {
+        "capture_inventory_run",
+        "protocol_observation",
+        "conversation_profile",
+        "conversation_profile_run",
+        "inventory_skip",
+        "analysis_coverage",
+        "multipart_part",
+        "multipart_part_artifact",
+        "finding_run",
+        "manual_queue_run",
+        "manual_task",
+        "manual_task_signal",
+        "manual_task_evidence",
+    }.issubset(set(database.table_names()))
+
+
+def test_early_schema_eleven_database_repairs_slice_three_tables(tmp_path) -> None:
+    database = Database(tmp_path / "project.sqlite")
+    database.initialize()
+    with database.connect() as connection:
+        for table in (
+            "manual_task_evidence",
+            "manual_task_signal",
+            "manual_task",
+            "manual_queue_run",
+            "finding_run",
+            "multipart_part_artifact",
+            "multipart_part",
+        ):
+            connection.execute(f"DROP TABLE {table}")
+        connection.execute("PRAGMA user_version = 11")
+    database.initialize()
+    assert {
+        "multipart_part",
+        "multipart_part_artifact",
+        "finding_run",
+        "manual_queue_run",
+        "manual_task",
+        "manual_task_signal",
+        "manual_task_evidence",
+    }.issubset(set(database.table_names()))
