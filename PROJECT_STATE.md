@@ -21,6 +21,11 @@ The first M3 slice is active. Its FTP structured metadata, explicit frame
 correlation, bounded TCP reuse, static export, and no-unpack contract is
 recorded in `docs/M3_SLICE1_IMPLEMENTATION.md`. That slice is now complete.
 
+The user approved the M3 directional Telnet dialogue plan after the remaining
+read-only sample inspection. Its schema 10, RFC 854 parsing, exact byte/source
+coverage, bounded query, and verification contract is recorded in
+`docs/M3_SLICE2_IMPLEMENTATION.md`. That slice is now complete.
+
 The user approved the detailed M2 slice 5 implementation plan. Its durable
 contract, revalidated sample facts, and verification gates are recorded in
 `docs/M2_SLICE5_IMPLEMENTATION.md`.
@@ -351,6 +356,60 @@ Environment paths below are local evidence, not production defaults:
   hardening remained one complete transfer/artifact at 164 bytes. Both schema 9
   runtime projects pass integrity, foreign keys, and empty jobs. The built
   package includes `ftp.py` and `protocols/ftp.py`.
+- M3 Telnet schema 10 and the standalone incremental RFC 854 parser are now
+  implemented as the first tested sub-slice. The parser treats current TCP
+  reconstruction bytes as authoritative, preserves absolute ranges across
+  arbitrary chunks, and covers negotiation, subnegotiation, escaped IAC,
+  incomplete controls, CR-NUL, binary bytes, and the sample's split `IAC DM`
+  shape. `uv run pytest -q tests/test_telnet_protocol.py tests/test_database.py`
+  reports 14 passed; focused Ruff checks pass. Persistence and CLI behavior are
+  not implemented yet.
+- M3 Telnet persistence and TCP role evidence are now implemented in the
+  focused synthetic sub-slice. TCP summaries expose the initial non-ACK SYN
+  initiator/responder when `tcp.flags.ack` is available; no port fallback is
+  used. Telnet discovery, current reconstruction reuse, exact record/source
+  coverage, prompt/input and exact echo relations, split-IAC handling, stable
+  reruns, record-budget skips, and blob reuse pass 24 focused tests. Ruff passes
+  for the touched modules. Stable query and CLI surfaces are the next sub-slice.
+- M3 Telnet indexing, bounded dialogue query, and both CLI surfaces are now
+  implemented. Candidate references are dynamic same-capture/direction/blob
+  range overlaps; previews are escaped and separately budgeted; metadata and
+  parse skips are explicit. Full Windows Python 3.11 verification passes Ruff
+  and 114 tests at 85 percent total coverage (Telnet persistence 87 percent,
+  protocol parser 97 percent). Real fresh-project acceptance and Python 3.9
+  validation remain pending.
+- M3 Telnet slice 2 is complete at schema 10. Final Windows CPython 3.11.15
+  verification passes Ruff and 119 tests at 85 percent total coverage; Telnet
+  persistence is 91 percent, its protocol parser 97 percent, and queries 98
+  percent. CPython 3.9.25 passes the same 119 tests. `uv build` succeeds and the
+  wheel contains `telnet.py`, `protocols/telnet.py`, and `queries.py`.
+- Clean real `m3-telnet-dialogue-clean.auto-shark` indexing is stable across
+  repeated current runs: one complete dialogue, 36 metadata frames, 44 records,
+  310 parsed bytes, zero skips, 54 record-source mappings, and three relations.
+  The client direction is the verified complete 124-byte blob
+  `7bf3a3d8c8d8664c12f6c527e809b10a4b76ce28a778f20ca5dff5eae1f6b700`;
+  the server direction is the verified complete 186-byte blob
+  `420bcf53bf0f7cf10f9795d4c2b053543b5aacc23280cdeeba40b3067c0656cb`.
+- Real Telnet records cover client `[0,124)` and server `[0,186)` exactly with
+  no gap or overlap. Login prompt `[71,107)` frame 22 links to client input
+  `[76,82)` frames 24/27/30/33/36 and its exact server echo. Password prompt
+  `[113,123)` frame 39 links to client `[82,122)` frames 41/43. The existing
+  rank-100 candidate remains exact `[82,120)`, frame 41 only, and is linked
+  dynamically without rescoring.
+- The real split `IAC DM` is one command record at server `[182,184)`, command
+  242, with source mappings frame 53 `[182,183)` and frame 54 `[183,184)`.
+  Bounded query output reports `current=true`, all 44 records, reversible
+  preview `\\xff\\xf2`, and exactly 310 total preview bytes.
+- Clean real `m3-telnet-budget-clean.auto-shark` with `--max-records 1`
+  persists one truncated dialogue/run, one 3-byte record, and two exact
+  `record-limit` skips totaling 307 bytes. Parsed plus skipped bytes equal the
+  full 310-byte bidirectional input; no selected direction disappears.
+- Both final schema 10 runtime projects pass SQLite integrity and foreign-key
+  checks, all blobs independently rehash and match length, and both `jobs`
+  directories are empty. The complete project's stable business rows are one
+  dialogue, 44 records, 54 source mappings, three relations, zero skips, and
+  one candidate. No answer file or captured artifact was opened, listed,
+  unpacked, rendered, decrypted, or executed.
 
 ## Active decisions
 
@@ -402,8 +461,7 @@ Environment paths below are local evidence, not production defaults:
 
 ## Next executable step
 
-Plan and contract the next M3 slice before implementation: directional Telnet
-dialogue records over current TCP reconstruction, with prompt/input sequencing,
-exact source-frame ranges, binary/control-byte preservation, and bounded JSON
-query output. Reuse the verified stream 0/frame 39-to-41 evidence and do not
-duplicate reconstructed bytes.
+Plan and contract the next M3 slice before implementation: bounded protocol and
+conversation summary plus a persistent manual-analysis queue. Reuse current
+HTTP/TCP/FTP/Telnet/file records, distinguish unavailable/partial analyzers,
+and do not duplicate payload bytes or collapse evidence-specific review state.

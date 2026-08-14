@@ -43,6 +43,9 @@ all exit criteria are verified and recorded in `PROJECT_STATE.md`.
   reuse, exact `ftp-data` evidence, budget states, and unreviewed static
   artifacts. Transferred archive contents are not opened.
 - Directional Telnet dialogue reconstruction.
+  Status: complete with initial-SYN endpoint roles, incremental RFC 854 byte
+  parsing, exact TCP source ranges, prompt/input/echo relations, explicit
+  bounded states, candidate linkage, and stable bounded JSON queries.
 - File magic, declared/actual type mismatch, structural end, trailing-data scan.
   Status: reusable bounded carving is complete for HTTP/transform evidence;
   general protocol correlation, type mismatch, and manual triage remain M3.

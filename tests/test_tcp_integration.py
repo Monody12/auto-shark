@@ -26,6 +26,7 @@ def _line(
     payload: bytes,
     *,
     syn: bool = False,
+    ack: bool = False,
     retransmission: bool = False,
 ) -> bytes:
     by_field = {
@@ -43,6 +44,7 @@ def _line(
         "tcp.len": str(len(payload)),
         "tcp.payload": payload.hex(),
         "tcp.flags.syn": "1" if syn else "",
+        "tcp.flags.ack": "1" if ack else "",
         "tcp.analysis.retransmission": "1" if retransmission else "",
     }
     values = [by_field.get(field, "") for field in TCP_FIELDS]
@@ -119,6 +121,19 @@ def test_tcp_parser_allows_unregistered_optional_analysis_fields() -> None:
     )
     assert packet.payload == b"abc"
     assert not packet.retransmission
+    assert not packet.ack
+
+
+def test_tcp_parser_handles_tshark_boolean_literals() -> None:
+    line = _line(1, "1.1.1.1", 1, "2.2.2.2", 2, 1, b"abc")
+    columns = line.decode().split("\t")
+    columns[TCP_FIELDS.index("tcp.flags.syn")] = "False"
+    columns[TCP_FIELDS.index("tcp.flags.ack")] = "True"
+
+    packet = parse_tcp_line("\t".join(columns).encode())
+
+    assert packet.syn is False
+    assert packet.ack is True
 
 
 def test_reconstructs_directions_conflicts_gaps_and_retransmissions(tmp_path, monkeypatch) -> None:
@@ -134,7 +149,7 @@ def test_reconstructs_directions_conflicts_gaps_and_retransmissions(tmp_path, mo
         _line(3, *client, 1, b"abc", retransmission=True),
         _line(4, *client, 3, b"cXefYZ"),
         _line(5, *client, 10, b"gap"),
-        _line(6, *server, 1, b"reply", syn=True),
+        _line(6, *server, 1, b"reply", syn=True, ack=True),
     ]
     monkeypatch.setattr(tcp_module, "run_streaming_lines", _fake_runner(lines))
     summary = reconstruct_tcp_stream(
@@ -146,6 +161,8 @@ def test_reconstructs_directions_conflicts_gaps_and_retransmissions(tmp_path, mo
         max_total_output_bytes=2048,
     )
     assert summary.indexed_segments == 6
+    assert summary.initiator_endpoint == "10.0.0.1:1234"
+    assert summary.responder_endpoint == "10.0.0.2:80"
     by_direction = {item.direction: item for item in summary.directions}
     client_summary = by_direction["10.0.0.1:1234>10.0.0.2:80"]
     server_summary = by_direction["10.0.0.2:80>10.0.0.1:1234"]
@@ -276,3 +293,47 @@ def test_total_output_budget_truncates_later_direction(tmp_path, monkeypatch) ->
     assert [item.status for item in summary.directions] == ["complete", "truncated"]
     assert all(item.capture_midstream for item in summary.directions)
     assert [item.output_bytes for item in summary.directions] == [3, 1]
+
+
+def test_syn_without_ack_capability_keeps_start_but_not_endpoint_roles(
+    tmp_path, monkeypatch
+) -> None:
+    capture = tmp_path / "capture.pcap"
+    capture.write_bytes(b"capture")
+    project = tmp_path / "sample.auto-shark"
+    create_project(capture, project)
+    available = tuple(field for field in TCP_FIELDS if field != "tcp.flags.ack")
+    capabilities = TsharkCapabilities(
+        executable="fake-tshark",
+        version_line="TShark fake",
+        fields=available,
+        protocols=("tcp",),
+        export_objects=(),
+        features={"tcp_stream": True},
+        missing_core_fields=(),
+        usable=True,
+        errors=(),
+    )
+    full_values = dict(
+        zip(
+            TCP_FIELDS,
+            _line(1, "10.0.0.1", 1234, "10.0.0.2", 23, 1, b"x", syn=True)
+            .decode()
+            .split("\t"),
+        )
+    )
+    line = "\t".join(full_values[field] for field in available).encode()
+    monkeypatch.setattr(tcp_module, "run_streaming_lines", _fake_runner([line]))
+
+    summary = reconstruct_tcp_stream(
+        project,
+        0,
+        Path("fake-tshark"),
+        capabilities=capabilities,
+        max_direction_bytes=100,
+        max_total_output_bytes=100,
+    )
+
+    assert summary.initiator_endpoint is None
+    assert summary.responder_endpoint is None
+    assert summary.directions[0].capture_midstream is False

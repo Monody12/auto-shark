@@ -26,6 +26,7 @@ TCP_OPTIONAL_FIELDS = (
     "ip.dst",
     "ipv6.dst",
     "tcp.flags.syn",
+    "tcp.flags.ack",
     "tcp.flags.fin",
     "tcp.flags.reset",
     "tcp.analysis.retransmission",
@@ -52,6 +53,7 @@ class TcpPacket:
     sequence_raw: int
     payload: bytes
     syn: bool
+    ack: bool
     fin: bool
     reset: bool
     retransmission: bool
@@ -69,6 +71,15 @@ def _integer(value: str, field: str) -> int:
         return int(value)
     except ValueError as error:
         raise ValueError(f"invalid {field}: {value!r}") from error
+
+
+def _boolean(value: str, field: str) -> bool:
+    normalized = value.strip().lower()
+    if normalized in ("", "0", "false"):
+        return False
+    if normalized in ("1", "true"):
+        return True
+    raise ValueError(f"invalid {field}: {value!r}")
 
 
 def selected_tcp_fields(available_fields: set[str]) -> tuple[str, ...]:
@@ -111,13 +122,26 @@ def parse_tcp_line(line: bytes, fields: Optional[tuple[str, ...]] = None) -> Tcp
         sequence_relative=_integer(field_values["tcp.seq"], "tcp.seq"),
         sequence_raw=_integer(field_values["tcp.seq_raw"], "tcp.seq_raw"),
         payload=payload,
-        syn=bool(field_values.get("tcp.flags.syn", "")),
-        fin=bool(field_values.get("tcp.flags.fin", "")),
-        reset=bool(field_values.get("tcp.flags.reset", "")),
-        retransmission=bool(field_values.get("tcp.analysis.retransmission", "")),
-        spurious_retransmission=bool(field_values.get("tcp.analysis.spurious_retransmission", "")),
-        out_of_order=bool(field_values.get("tcp.analysis.out_of_order", "")),
-        lost_segment=bool(field_values.get("tcp.analysis.lost_segment", "")),
+        syn=_boolean(field_values.get("tcp.flags.syn", ""), "tcp.flags.syn"),
+        ack=_boolean(field_values.get("tcp.flags.ack", ""), "tcp.flags.ack"),
+        fin=_boolean(field_values.get("tcp.flags.fin", ""), "tcp.flags.fin"),
+        reset=_boolean(field_values.get("tcp.flags.reset", ""), "tcp.flags.reset"),
+        retransmission=_boolean(
+            field_values.get("tcp.analysis.retransmission", ""),
+            "tcp.analysis.retransmission",
+        ),
+        spurious_retransmission=_boolean(
+            field_values.get("tcp.analysis.spurious_retransmission", ""),
+            "tcp.analysis.spurious_retransmission",
+        ),
+        out_of_order=_boolean(
+            field_values.get("tcp.analysis.out_of_order", ""),
+            "tcp.analysis.out_of_order",
+        ),
+        lost_segment=_boolean(
+            field_values.get("tcp.analysis.lost_segment", ""),
+            "tcp.analysis.lost_segment",
+        ),
     )
 
 

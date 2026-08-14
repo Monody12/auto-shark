@@ -18,8 +18,9 @@ from .files.carve import carve_project
 from .ftp import index_ftp
 from .pipeline import scan_project
 from .project import create_project, inspect_project
-from .queries import query_streams, query_transactions
+from .queries import query_streams, query_telnet_dialogues, query_transactions
 from .tcp import reconstruct_tcp_stream
+from .telnet import index_telnet
 from .triage import triage_project
 from .version import __version__
 from .workflow import analyze_with_bodies
@@ -107,6 +108,33 @@ def _parser() -> argparse.ArgumentParser:
     ftp.add_argument("--max-transfer-bytes", type=int, default=256 * 1024 * 1024)
     ftp.add_argument("--max-total-bytes", type=int, default=512 * 1024 * 1024)
 
+    telnet = commands.add_parser(
+        "index-telnet", help="index bounded directional Telnet dialogues"
+    )
+    telnet.add_argument("project", type=Path)
+    telnet.add_argument("--tshark", type=Path, help="explicit path to tshark executable")
+    telnet.add_argument("--max-metadata-frames", type=int, default=100_000)
+    telnet.add_argument("--max-streams", type=int, default=10_000)
+    telnet.add_argument("--max-records", type=int, default=100_000)
+    telnet.add_argument("--max-record-bytes", type=int, default=1024 * 1024)
+    telnet.add_argument("--max-index-bytes", type=int, default=512 * 1024 * 1024)
+    telnet.add_argument("--max-direction-bytes", type=int, default=256 * 1024 * 1024)
+    telnet.add_argument("--max-total-bytes", type=int, default=512 * 1024 * 1024)
+
+    dialogues = commands.add_parser(
+        "telnet-dialogues", help="query current bounded Telnet dialogue records"
+    )
+    dialogues.add_argument("project", type=Path)
+    dialogues.add_argument("--stream", type=int)
+    dialogues.add_argument("--offset", type=int, default=0)
+    dialogues.add_argument("--limit", type=int, default=100)
+    dialogues.add_argument("--max-records", type=int, default=1000)
+    dialogues.add_argument("--max-preview-bytes", type=int, default=256)
+    dialogues.add_argument("--max-total-preview-bytes", type=int, default=64 * 1024)
+    dialogues.add_argument("--max-source-mappings", type=int, default=10_000)
+    dialogues.add_argument("--max-relations", type=int, default=10_000)
+    dialogues.add_argument("--max-candidates", type=int, default=10_000)
+
     probe = commands.add_parser("probe", help="probe TShark capabilities")
     probe.add_argument("--tshark", type=Path, help="explicit path to tshark executable")
     probe.add_argument("--json", action="store_true", help="emit the complete JSON profile")
@@ -142,6 +170,45 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         parser.print_help()
         return 0
     try:
+        if args.command == "index-telnet":
+            settings = Settings.from_environment()
+            executable = find_tshark(args.tshark or settings.tshark_path)
+            if executable is None:
+                print(
+                    "TShark was not found. Use --tshark or AUTO_SHARK_TSHARK.",
+                    file=sys.stderr,
+                )
+                return 2
+            print(
+                index_telnet(
+                    args.project,
+                    executable,
+                    max_metadata_frames=args.max_metadata_frames,
+                    max_streams=args.max_streams,
+                    max_records=args.max_records,
+                    max_record_bytes=args.max_record_bytes,
+                    max_index_payload_bytes=args.max_index_bytes,
+                    max_direction_bytes=args.max_direction_bytes,
+                    max_total_bytes=args.max_total_bytes,
+                ).to_json()
+            )
+            return 0
+        if args.command == "telnet-dialogues":
+            print(
+                query_telnet_dialogues(
+                    args.project,
+                    stream=args.stream,
+                    offset=args.offset,
+                    limit=args.limit,
+                    max_records_per_dialogue=args.max_records,
+                    max_preview_bytes=args.max_preview_bytes,
+                    max_total_preview_bytes=args.max_total_preview_bytes,
+                    max_source_mappings=args.max_source_mappings,
+                    max_relations=args.max_relations,
+                    max_candidates=args.max_candidates,
+                ).to_json()
+            )
+            return 0
         if args.command == "index-ftp":
             settings = Settings.from_environment()
             executable = find_tshark(args.tshark or settings.tshark_path)

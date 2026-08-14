@@ -2,6 +2,8 @@ import json
 
 from auto_shark import cli
 from auto_shark.ftp import FtpIndexSummary
+from auto_shark.queries import TelnetQueryPage
+from auto_shark.telnet import TelnetIndexSummary
 from auto_shark.triage import TriageSummary
 
 
@@ -129,3 +131,136 @@ def test_index_ftp_cli_forwards_limits(monkeypatch, capsys, tmp_path) -> None:
         "max_total_output_bytes": 19,
     }
     assert json.loads(capsys.readouterr().out)["schema_version"] == "auto-shark.ftp-index/v1"
+
+
+def test_index_telnet_cli_forwards_limits(monkeypatch, capsys, tmp_path) -> None:
+    received = {}
+    executable = tmp_path / "tshark.exe"
+    executable.write_bytes(b"tool")
+
+    def fake_index(project, tshark, **limits):
+        received.update({"project": project, "tshark": tshark, **limits})
+        return TelnetIndexSummary(
+            schema_version="auto-shark.telnet-index/v1",
+            project=str(project),
+            metadata_frames=0,
+            skipped_metadata_frames=0,
+            streams=0,
+            complete=0,
+            partial=0,
+            conflicting=0,
+            truncated=0,
+            unresolved_role=0,
+            failed=0,
+            records=0,
+            parsed_bytes=0,
+            skipped_bytes=0,
+        )
+
+    monkeypatch.setattr(cli, "index_telnet", fake_index)
+    project = tmp_path / "sample.auto-shark"
+    result = cli.main(
+        [
+            "index-telnet",
+            str(project),
+            "--tshark",
+            str(executable),
+            "--max-metadata-frames",
+            "3",
+            "--max-streams",
+            "5",
+            "--max-records",
+            "7",
+            "--max-record-bytes",
+            "11",
+            "--max-index-bytes",
+            "13",
+            "--max-direction-bytes",
+            "17",
+            "--max-total-bytes",
+            "19",
+        ]
+    )
+
+    assert result == 0
+    assert received == {
+        "project": project,
+        "tshark": executable.resolve(),
+        "max_metadata_frames": 3,
+        "max_streams": 5,
+        "max_records": 7,
+        "max_record_bytes": 11,
+        "max_index_payload_bytes": 13,
+        "max_direction_bytes": 17,
+        "max_total_bytes": 19,
+    }
+    assert json.loads(capsys.readouterr().out)["schema_version"] == (
+        "auto-shark.telnet-index/v1"
+    )
+
+
+def test_telnet_dialogues_cli_forwards_query_limits(monkeypatch, capsys, tmp_path) -> None:
+    received = {}
+
+    def fake_query(project, **limits):
+        received.update({"project": project, **limits})
+        return TelnetQueryPage(
+            schema_version="auto-shark.telnet-dialogues/v1",
+            project=str(project),
+            offset=limits["offset"],
+            limit=limits["limit"],
+            total=0,
+            count=0,
+            max_records_per_dialogue=limits["max_records_per_dialogue"],
+            max_preview_bytes=limits["max_preview_bytes"],
+            max_total_preview_bytes=limits["max_total_preview_bytes"],
+            max_source_mappings=limits["max_source_mappings"],
+            max_relations=limits["max_relations"],
+            max_candidates=limits["max_candidates"],
+            preview_bytes=0,
+            items=(),
+        )
+
+    monkeypatch.setattr(cli, "query_telnet_dialogues", fake_query)
+    project = tmp_path / "sample.auto-shark"
+    result = cli.main(
+        [
+            "telnet-dialogues",
+            str(project),
+            "--stream",
+            "2",
+            "--offset",
+            "3",
+            "--limit",
+            "5",
+            "--max-records",
+            "7",
+            "--max-preview-bytes",
+            "11",
+            "--max-total-preview-bytes",
+            "13",
+            "--max-source-mappings",
+            "17",
+            "--max-relations",
+            "19",
+            "--max-candidates",
+            "23",
+        ]
+    )
+
+    assert result == 0
+    assert received == {
+        "project": project,
+        "stream": 2,
+        "offset": 3,
+        "limit": 5,
+        "max_records_per_dialogue": 7,
+        "max_preview_bytes": 11,
+        "max_total_preview_bytes": 13,
+        "max_source_mappings": 17,
+        "max_relations": 19,
+        "max_candidates": 23,
+    }
+    assert json.loads(capsys.readouterr().out)["schema_version"] == (
+        "auto-shark.telnet-dialogues/v1"
+    )

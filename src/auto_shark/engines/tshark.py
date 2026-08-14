@@ -48,6 +48,7 @@ FEATURE_FIELDS = {
             "tcp.len",
             "tcp.payload",
             "tcp.flags.syn",
+            "tcp.flags.ack",
             "tcp.flags.fin",
             "tcp.flags.reset",
             "tcp.analysis.retransmission",

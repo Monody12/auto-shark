@@ -28,6 +28,27 @@ class QueryPage:
         return json.dumps(asdict(self), ensure_ascii=False, sort_keys=True, indent=2)
 
 
+@dataclass(frozen=True)
+class TelnetQueryPage:
+    schema_version: str
+    project: str
+    offset: int
+    limit: int
+    total: int
+    count: int
+    max_records_per_dialogue: int
+    max_preview_bytes: int
+    max_total_preview_bytes: int
+    max_source_mappings: int
+    max_relations: int
+    max_candidates: int
+    preview_bytes: int
+    items: tuple[dict[str, object], ...]
+
+    def to_json(self) -> str:
+        return json.dumps(asdict(self), ensure_ascii=False, sort_keys=True, indent=2)
+
+
 def _validate_page(offset: int, limit: int) -> None:
     if offset < 0:
         raise ValueError("query offset cannot be negative")
@@ -221,4 +242,307 @@ def query_streams(
         total=total,
         count=len(items),
         items=items,
+    )
+
+
+def _escaped_preview(data: bytes) -> str:
+    pieces: list[str] = []
+    named = {9: r"\t", 10: r"\n", 13: r"\r"}
+    for value in data:
+        if value in named:
+            pieces.append(named[value])
+        elif value == 92:
+            pieces.append(r"\\")
+        elif 32 <= value <= 126:
+            pieces.append(chr(value))
+        else:
+            pieces.append(f"\\x{value:02x}")
+    return "".join(pieces)
+
+
+def query_telnet_dialogues(
+    project_path: Path,
+    *,
+    offset: int = 0,
+    limit: int = DEFAULT_PAGE_LIMIT,
+    stream: Optional[int] = None,
+    max_records_per_dialogue: int = 1000,
+    max_preview_bytes: int = 256,
+    max_total_preview_bytes: int = 64 * 1024,
+    max_source_mappings: int = 10_000,
+    max_relations: int = 10_000,
+    max_candidates: int = 10_000,
+) -> TelnetQueryPage:
+    _validate_page(offset, limit)
+    if stream is not None and stream < 0:
+        raise ValueError("TCP stream index cannot be negative")
+    if min(
+        max_records_per_dialogue,
+        max_preview_bytes,
+        max_total_preview_bytes,
+        max_source_mappings,
+        max_relations,
+        max_candidates,
+    ) <= 0:
+        raise ValueError("Telnet query limits must be positive")
+    if max_records_per_dialogue > 10_000:
+        raise ValueError("Telnet records per dialogue cannot exceed 10000")
+    project = inspect_project(project_path)
+    database = Database(project.root / "project.sqlite")
+    database.initialize()
+    where = ""
+    parameters: list[object] = []
+    if stream is not None:
+        where = " WHERE c.stream_index=?"
+        parameters.append(stream)
+    base = (
+        " FROM telnet_dialogue td JOIN conversation c ON c.id=td.conversation_id "
+        "LEFT JOIN tcp_reconstruction client_tr ON client_tr.id=td.client_reconstruction_id "
+        "LEFT JOIN evidence client_e ON client_e.id=client_tr.evidence_id "
+        "LEFT JOIN blob client_b ON client_b.id=client_e.blob_id "
+        "LEFT JOIN tcp_reconstruction server_tr ON server_tr.id=td.server_reconstruction_id "
+        "LEFT JOIN evidence server_e ON server_e.id=server_tr.evidence_id "
+        "LEFT JOIN blob server_b ON server_b.id=server_e.blob_id "
+    )
+    preview_remaining = max_total_preview_bytes
+    preview_bytes = 0
+    source_remaining = max_source_mappings
+    relation_remaining = max_relations
+    candidate_remaining = max_candidates
+    items: list[dict[str, object]] = []
+    with database.connect() as connection:
+        total = int(connection.execute("SELECT count(*)" + base + where, parameters).fetchone()[0])
+        dialogues = connection.execute(
+            "SELECT td.id,td.dialogue_id,td.client_endpoint,td.server_endpoint,td.status,"
+            "td.error,td.updated_at,c.stream_index,c.endpoint_a,c.endpoint_b,"
+            "client_tr.reconstruction_id client_reconstruction_id,"
+            "client_tr.direction client_direction,client_tr.status client_status,"
+            "client_tr.updated_at client_updated_at,client_b.sha256 client_blob_sha256,"
+            "client_b.byte_length client_blob_bytes,"
+            "server_tr.reconstruction_id server_reconstruction_id,"
+            "server_tr.direction server_direction,server_tr.status server_status,"
+            "server_tr.updated_at server_updated_at,server_b.sha256 server_blob_sha256,"
+            "server_b.byte_length server_blob_bytes "
+            + base
+            + where
+            + " ORDER BY c.stream_index,td.dialogue_id LIMIT ? OFFSET ?",
+            (*parameters, limit, offset),
+        ).fetchall()
+        for dialogue in dialogues:
+            dialogue_id = int(dialogue["id"])
+            total_records = int(
+                connection.execute(
+                    "SELECT count(*) FROM telnet_record WHERE dialogue_id=?", (dialogue_id,)
+                ).fetchone()[0]
+            )
+            record_rows = connection.execute(
+                "SELECT tr.id,tr.record_id,tr.direction_role,tr.record_kind,tr.stream_offset,"
+                "tr.byte_length,tr.semantic_label,tr.command,tr.option_code,tr.frame_start,"
+                "tr.frame_end,tr.time_start,tr.time_end,e.evidence_id,tcp_e.blob_id,"
+                "tcp_b.sha256,tcp_b.relative_path,tcp_tr.updated_at reconstruction_updated_at "
+                "FROM telnet_record tr "
+                "JOIN tcp_reconstruction tcp_tr ON tcp_tr.id=tr.reconstruction_id "
+                "LEFT JOIN evidence tcp_e ON tcp_e.id=tcp_tr.evidence_id "
+                "LEFT JOIN blob tcp_b ON tcp_b.id=tcp_e.blob_id "
+                "LEFT JOIN evidence e ON e.id=tr.evidence_id WHERE tr.dialogue_id=? "
+                "ORDER BY tr.frame_start,tr.time_start,tr.direction_role,tr.stream_offset,"
+                "tr.record_id LIMIT ?",
+                (dialogue_id, max_records_per_dialogue),
+            ).fetchall()
+            record_ids = tuple(int(row["id"]) for row in record_rows)
+            source_map: dict[int, list[dict[str, object]]] = {}
+            relation_map: dict[int, list[dict[str, str]]] = {}
+            candidate_map: dict[int, list[dict[str, object]]] = {}
+            source_counts: dict[int, int] = {}
+            relation_counts: dict[int, int] = {}
+            candidate_counts: dict[int, int] = {}
+            if record_ids:
+                placeholders = ",".join("?" for _ in record_ids)
+                for count_row in connection.execute(
+                    "SELECT record_id,count(*) FROM telnet_record_source "
+                    f"WHERE record_id IN ({placeholders}) GROUP BY record_id",
+                    record_ids,
+                ):
+                    source_counts[int(count_row[0])] = int(count_row[1])
+                for source in connection.execute(
+                    "SELECT trs.record_id,ts.frame_number,trs.record_offset,trs.stream_offset,"
+                    "trs.byte_length FROM telnet_record_source trs "
+                    "JOIN tcp_segment ts ON ts.id=trs.segment_id "
+                    f"WHERE trs.record_id IN ({placeholders}) "
+                    "ORDER BY trs.record_id,trs.record_offset,ts.frame_number LIMIT ?",
+                    (*record_ids, source_remaining),
+                ):
+                    source_map.setdefault(int(source["record_id"]), []).append(
+                        {
+                            "frame": int(source["frame_number"]),
+                            "record_offset": int(source["record_offset"]),
+                            "stream_offset": int(source["stream_offset"]),
+                            "byte_length": int(source["byte_length"]),
+                        }
+                    )
+                    source_remaining -= 1
+                for count_row in connection.execute(
+                    "SELECT record_id,count(*) FROM telnet_record_relation "
+                    f"WHERE record_id IN ({placeholders}) GROUP BY record_id",
+                    record_ids,
+                ):
+                    relation_counts[int(count_row[0])] = int(count_row[1])
+                for relation in connection.execute(
+                    "SELECT rel.record_id,target.record_id target_record_id,rel.relation "
+                    "FROM telnet_record_relation rel "
+                    "JOIN telnet_record target ON target.id=rel.related_record_id "
+                    f"WHERE rel.record_id IN ({placeholders}) "
+                    "ORDER BY rel.record_id,rel.relation,target.record_id LIMIT ?",
+                    (*record_ids, relation_remaining),
+                ):
+                    relation_map.setdefault(int(relation["record_id"]), []).append(
+                        {
+                            "relation": str(relation["relation"]),
+                            "record_id": str(relation["target_record_id"]),
+                        }
+                    )
+                    relation_remaining -= 1
+                candidate_base = (
+                    " FROM telnet_record tr JOIN evidence re ON re.id=tr.evidence_id "
+                    "JOIN evidence ce ON ce.blob_id=re.blob_id "
+                    "AND ce.capture_id=re.capture_id AND ce.direction=re.direction "
+                    "AND ce.byte_offset < tr.stream_offset+tr.byte_length "
+                    "AND ce.byte_offset+ce.byte_length > tr.stream_offset "
+                    "JOIN candidate_evidence link ON link.evidence_id=ce.id "
+                    "JOIN candidate c ON c.id=link.candidate_id "
+                    f"WHERE tr.id IN ({placeholders}) "
+                )
+                for count_row in connection.execute(
+                    "SELECT record_db_id,count(*) FROM (SELECT DISTINCT tr.id record_db_id,"
+                    "c.candidate_id,ce.evidence_id" + candidate_base + ") GROUP BY record_db_id",
+                    record_ids,
+                ):
+                    candidate_counts[int(count_row[0])] = int(count_row[1])
+                for candidate in connection.execute(
+                    "SELECT DISTINCT tr.id record_db_id,c.candidate_id,c.kind,c.rank_score,"
+                    "c.confidence,ce.evidence_id candidate_evidence_id"
+                    + candidate_base
+                    + "ORDER BY tr.id,c.rank_score DESC,c.candidate_id,ce.evidence_id LIMIT ?",
+                    (*record_ids, candidate_remaining),
+                ):
+                    candidate_map.setdefault(int(candidate["record_db_id"]), []).append(
+                        {
+                            "candidate_id": str(candidate["candidate_id"]),
+                            "evidence_id": str(candidate["candidate_evidence_id"]),
+                            "kind": str(candidate["kind"]),
+                            "rank_score": float(candidate["rank_score"]),
+                            "confidence": float(candidate["confidence"]),
+                        }
+                    )
+                    candidate_remaining -= 1
+            records: list[dict[str, object]] = []
+            for record in record_rows:
+                requested = min(int(record["byte_length"]), max_preview_bytes, preview_remaining)
+                data = b""
+                if requested and record["relative_path"] is not None:
+                    with (project.root / str(record["relative_path"])).open("rb") as source:
+                        source.seek(int(record["stream_offset"]))
+                        data = source.read(requested)
+                    if len(data) != requested:
+                        raise ValueError("short Telnet preview blob read")
+                preview_remaining -= len(data)
+                preview_bytes += len(data)
+                record_id = int(record["id"])
+                records.append(
+                    {
+                        "record_id": record["record_id"],
+                        "direction_role": record["direction_role"],
+                        "kind": record["record_kind"],
+                        "range": {
+                            "start": int(record["stream_offset"]),
+                            "end": int(record["stream_offset"]) + int(record["byte_length"]),
+                            "byte_length": int(record["byte_length"]),
+                        },
+                        "semantic_label": record["semantic_label"],
+                        "command": record["command"],
+                        "option": record["option_code"],
+                        "frames": {
+                            "start": record["frame_start"],
+                            "end": record["frame_end"],
+                        },
+                        "time": {"start": record["time_start"], "end": record["time_end"]},
+                        "evidence_id": record["evidence_id"],
+                        "blob_sha256": record["sha256"],
+                        "preview": _escaped_preview(data),
+                        "preview_bytes": len(data),
+                        "preview_truncated": len(data) < int(record["byte_length"]),
+                        "sources": source_map.get(record_id, []),
+                        "source_count": source_counts.get(record_id, 0),
+                        "sources_truncated": len(source_map.get(record_id, []))
+                        < source_counts.get(record_id, 0),
+                        "relations": relation_map.get(record_id, []),
+                        "relation_count": relation_counts.get(record_id, 0),
+                        "relations_truncated": len(relation_map.get(record_id, []))
+                        < relation_counts.get(record_id, 0),
+                        "candidates": candidate_map.get(record_id, []),
+                        "candidate_count": candidate_counts.get(record_id, 0),
+                        "candidates_truncated": len(candidate_map.get(record_id, []))
+                        < candidate_counts.get(record_id, 0),
+                    }
+                )
+            reconstruction_updates = tuple(
+                value
+                for value in (
+                    dialogue["client_updated_at"],
+                    dialogue["server_updated_at"],
+                )
+                if value is not None
+            )
+            current = bool(reconstruction_updates) and all(
+                str(dialogue["updated_at"]) >= str(value) for value in reconstruction_updates
+            )
+            items.append(
+                {
+                    "dialogue_id": dialogue["dialogue_id"],
+                    "stream_index": int(dialogue["stream_index"]),
+                    "status": dialogue["status"],
+                    "error": dialogue["error"],
+                    "current": current,
+                    "endpoints": {
+                        "capture": [dialogue["endpoint_a"], dialogue["endpoint_b"]],
+                        "client": dialogue["client_endpoint"],
+                        "server": dialogue["server_endpoint"],
+                    },
+                    "directions": {
+                        "client": {
+                            "reconstruction_id": dialogue["client_reconstruction_id"],
+                            "direction": dialogue["client_direction"],
+                            "status": dialogue["client_status"],
+                            "blob_sha256": dialogue["client_blob_sha256"],
+                            "byte_length": dialogue["client_blob_bytes"],
+                        },
+                        "server": {
+                            "reconstruction_id": dialogue["server_reconstruction_id"],
+                            "direction": dialogue["server_direction"],
+                            "status": dialogue["server_status"],
+                            "blob_sha256": dialogue["server_blob_sha256"],
+                            "byte_length": dialogue["server_blob_bytes"],
+                        },
+                    },
+                    "total_records": total_records,
+                    "record_count": len(records),
+                    "records_truncated": len(records) < total_records,
+                    "records": records,
+                }
+            )
+    return TelnetQueryPage(
+        schema_version="auto-shark.telnet-dialogues/v1",
+        project=str(project.root),
+        offset=offset,
+        limit=limit,
+        total=total,
+        count=len(items),
+        max_records_per_dialogue=max_records_per_dialogue,
+        max_preview_bytes=max_preview_bytes,
+        max_total_preview_bytes=max_total_preview_bytes,
+        max_source_mappings=max_source_mappings,
+        max_relations=max_relations,
+        max_candidates=max_candidates,
+        preview_bytes=preview_bytes,
+        items=tuple(items),
     )

@@ -95,6 +95,26 @@ exact `ftp-data` evidence and an unreviewed artifact. Archives are classified
 by fixed magic bytes only; their contents are not listed, opened, decrypted, or
 unpacked.
 
+Telnet streams can be indexed as directional byte-accurate dialogues and then
+queried without inlining full reconstruction blobs:
+
+```powershell
+uv run auto-shark index-telnet `
+  "$env:LOCALAPPDATA\AutoShark\projects\capture.auto-shark" `
+  --tshark C:\path\to\tshark.exe `
+  --max-records 100000 --max-total-bytes 536870912
+
+uv run auto-shark telnet-dialogues `
+  "$env:LOCALAPPDATA\AutoShark\projects\capture.auto-shark" `
+  --stream 0 --max-records 1000 --max-preview-bytes 256
+```
+
+The Telnet layer parses RFC 854 commands across frame boundaries from current
+TCP reconstruction bytes, preserves binary/control ranges, and links prompts,
+inputs, exact echoes, source frames, and overlapping candidates. Query previews
+use reversible escapes and independent byte budgets; they are not the stored
+evidence contract.
+
 One bidirectional TCP stream can be indexed and reconstructed with explicit
 segment and output budgets:
 

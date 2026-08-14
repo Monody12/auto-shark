@@ -581,4 +581,119 @@ MIGRATIONS = (
         ON ftp_data_message(setup_frame,command_frame);
     CREATE INDEX idx_ftp_transfer_status ON ftp_transfer(status,data_stream_index);
     """,
+    """
+    CREATE TABLE telnet_dialogue (
+        id INTEGER PRIMARY KEY,
+        dialogue_id TEXT NOT NULL UNIQUE,
+        capture_id INTEGER NOT NULL REFERENCES capture(id) ON DELETE CASCADE,
+        conversation_id INTEGER NOT NULL REFERENCES conversation(id) ON DELETE CASCADE,
+        client_endpoint TEXT,
+        server_endpoint TEXT,
+        client_reconstruction_id INTEGER
+            REFERENCES tcp_reconstruction(id) ON DELETE SET NULL,
+        server_reconstruction_id INTEGER
+            REFERENCES tcp_reconstruction(id) ON DELETE SET NULL,
+        status TEXT NOT NULL CHECK (
+            status IN (
+                'indexed','complete','partial','conflicting','truncated',
+                'unresolved-role','failed'
+            )
+        ),
+        error TEXT,
+        updated_at TEXT NOT NULL,
+        UNIQUE (conversation_id)
+    );
+
+    CREATE TABLE telnet_dialogue_run (
+        id INTEGER PRIMARY KEY,
+        dialogue_id INTEGER NOT NULL REFERENCES telnet_dialogue(id) ON DELETE CASCADE,
+        tool_run_id INTEGER NOT NULL REFERENCES tool_run(id) ON DELETE RESTRICT,
+        policy_json TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('completed','truncated','failed')),
+        record_count INTEGER NOT NULL CHECK (record_count >= 0),
+        parsed_bytes INTEGER NOT NULL CHECK (parsed_bytes >= 0),
+        skipped_bytes INTEGER NOT NULL CHECK (skipped_bytes >= 0),
+        error TEXT,
+        created_at TEXT NOT NULL,
+        UNIQUE (dialogue_id,tool_run_id)
+    );
+
+    CREATE TABLE telnet_metadata_skip (
+        tool_run_id INTEGER NOT NULL REFERENCES tool_run(id) ON DELETE CASCADE,
+        capture_id INTEGER NOT NULL REFERENCES capture(id) ON DELETE CASCADE,
+        frame_number INTEGER NOT NULL,
+        stream_index INTEGER NOT NULL CHECK (stream_index >= 0),
+        reason TEXT NOT NULL CHECK (reason IN ('frame-limit')),
+        PRIMARY KEY (tool_run_id,frame_number),
+        FOREIGN KEY (capture_id,frame_number)
+            REFERENCES frame(capture_id,frame_number) ON DELETE CASCADE
+    ) WITHOUT ROWID;
+
+    CREATE TABLE telnet_record (
+        id INTEGER PRIMARY KEY,
+        record_id TEXT NOT NULL UNIQUE,
+        dialogue_id INTEGER NOT NULL REFERENCES telnet_dialogue(id) ON DELETE CASCADE,
+        reconstruction_id INTEGER NOT NULL
+            REFERENCES tcp_reconstruction(id) ON DELETE CASCADE,
+        evidence_id INTEGER REFERENCES evidence(id) ON DELETE SET NULL,
+        direction_role TEXT NOT NULL CHECK (direction_role IN ('client','server')),
+        record_kind TEXT NOT NULL CHECK (
+            record_kind IN (
+                'application','negotiation','subnegotiation','command','incomplete-control'
+            )
+        ),
+        stream_offset INTEGER NOT NULL CHECK (stream_offset >= 0),
+        byte_length INTEGER NOT NULL CHECK (byte_length > 0),
+        semantic_label TEXT,
+        command INTEGER CHECK (command IS NULL OR (command >= 0 AND command <= 255)),
+        option_code INTEGER CHECK (
+            option_code IS NULL OR (option_code >= 0 AND option_code <= 255)
+        ),
+        frame_start INTEGER,
+        frame_end INTEGER,
+        time_start REAL,
+        time_end REAL,
+        created_at TEXT NOT NULL,
+        UNIQUE (reconstruction_id,stream_offset,byte_length,record_kind)
+    );
+
+    CREATE TABLE telnet_record_source (
+        record_id INTEGER NOT NULL REFERENCES telnet_record(id) ON DELETE CASCADE,
+        segment_id INTEGER NOT NULL REFERENCES tcp_segment(id) ON DELETE CASCADE,
+        record_offset INTEGER NOT NULL CHECK (record_offset >= 0),
+        stream_offset INTEGER NOT NULL CHECK (stream_offset >= 0),
+        byte_length INTEGER NOT NULL CHECK (byte_length > 0),
+        PRIMARY KEY (record_id,segment_id,record_offset)
+    ) WITHOUT ROWID;
+
+    CREATE TABLE telnet_record_relation (
+        record_id INTEGER NOT NULL REFERENCES telnet_record(id) ON DELETE CASCADE,
+        related_record_id INTEGER NOT NULL REFERENCES telnet_record(id) ON DELETE CASCADE,
+        relation TEXT NOT NULL CHECK (relation IN ('responds-to','echo-of')),
+        PRIMARY KEY (record_id,related_record_id,relation),
+        CHECK (record_id != related_record_id)
+    ) WITHOUT ROWID;
+
+    CREATE TABLE telnet_parse_skip (
+        id INTEGER PRIMARY KEY,
+        dialogue_run_id INTEGER NOT NULL
+            REFERENCES telnet_dialogue_run(id) ON DELETE CASCADE,
+        reconstruction_id INTEGER REFERENCES tcp_reconstruction(id) ON DELETE CASCADE,
+        stream_offset INTEGER NOT NULL CHECK (stream_offset >= 0),
+        byte_length INTEGER NOT NULL CHECK (byte_length >= 0),
+        reason TEXT NOT NULL CHECK (
+            reason IN (
+                'stream-limit','metadata-limit','record-limit','direction-byte-budget',
+                'total-byte-budget','reconstruction-unavailable'
+            )
+        ),
+        UNIQUE (dialogue_run_id,reconstruction_id,stream_offset,reason)
+    );
+
+    CREATE INDEX idx_telnet_dialogue_status ON telnet_dialogue(status,conversation_id);
+    CREATE INDEX idx_telnet_record_timeline
+        ON telnet_record(dialogue_id,frame_start,time_start,direction_role,stream_offset);
+    CREATE INDEX idx_telnet_record_range
+        ON telnet_record(reconstruction_id,stream_offset,byte_length);
+    """,
 )

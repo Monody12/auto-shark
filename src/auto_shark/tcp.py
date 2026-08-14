@@ -74,6 +74,8 @@ class TcpReconstructionSummary:
     skipped_segments: int
     index_truncated: bool
     directions: tuple[TcpDirectionSummary, ...]
+    initiator_endpoint: Optional[str] = None
+    responder_endpoint: Optional[str] = None
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=False, sort_keys=True, indent=2)
@@ -774,15 +776,22 @@ def reconstruct_tcp_stream(
     exit_code = None
     stderr_text = "TCP indexing failed; see caller error"
     stderr_truncated = 0
-    saw_syn_by_direction: dict[str, bool] = {}
+    saw_any_syn = False
+    saw_initial_syn = False
+    initiator_endpoint: Optional[str] = None
+    responder_endpoint: Optional[str] = None
+    ack_available = "tcp.flags.ack" in available_fields
     try:
 
         def consume(line: bytes) -> None:
             nonlocal indexed_segments, indexed_payload_bytes, skipped_segments, index_truncated
+            nonlocal saw_any_syn, saw_initial_syn, initiator_endpoint, responder_endpoint
             packet = parse_tcp_line(line, parsed_fields)
-            saw_syn_by_direction[packet.direction] = (
-                saw_syn_by_direction.get(packet.direction, False) or packet.syn
-            )
+            saw_any_syn = saw_any_syn or packet.syn
+            if ack_available and packet.syn and not packet.ack and not saw_initial_syn:
+                saw_initial_syn = True
+                initiator_endpoint = f"{packet.source}:{packet.source_port}"
+                responder_endpoint = f"{packet.destination}:{packet.destination_port}"
             if not packet.payload:
                 return
             if (
@@ -878,7 +887,7 @@ def reconstruct_tcp_stream(
         directions = tuple(sorted(indexed_directions | skipped_directions))
     summaries: list[TcpDirectionSummary] = []
     remaining_total = max_total_output_bytes
-    capture_has_stream_start = any(saw_syn_by_direction.values())
+    capture_has_stream_start = saw_any_syn
     for direction in directions:
         limit = min(max_direction_bytes, remaining_total)
         summary = _reconstruct_direction(
@@ -903,4 +912,6 @@ def reconstruct_tcp_stream(
         skipped_segments=skipped_segments,
         index_truncated=index_truncated,
         directions=tuple(summaries),
+        initiator_endpoint=initiator_endpoint,
+        responder_endpoint=responder_endpoint,
     )

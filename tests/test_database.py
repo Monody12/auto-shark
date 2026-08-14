@@ -115,3 +115,26 @@ def test_schema_eight_database_migrates_to_ftp_schema(tmp_path) -> None:
         "ftp_transfer",
         "ftp_transfer_message",
     }.issubset(set(database.table_names()))
+
+
+def test_schema_nine_database_migrates_to_telnet_schema(tmp_path) -> None:
+    path = tmp_path / "schema-nine.sqlite"
+    database = Database(path)
+    with database.connect() as connection:
+        for script in MIGRATIONS[:9]:
+            connection.executescript(script)
+        connection.execute(f"PRAGMA application_id = {APPLICATION_ID}")
+        connection.execute("PRAGMA user_version = 9")
+    database.initialize()
+    with database.connect() as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+    assert {
+        "telnet_dialogue",
+        "telnet_dialogue_run",
+        "telnet_metadata_skip",
+        "telnet_record",
+        "telnet_record_source",
+        "telnet_record_relation",
+        "telnet_parse_skip",
+    }.issubset(set(database.table_names()))
