@@ -65,6 +65,8 @@ def _candidate_signals(
             rule, priority = "rank-100-known-format", 100
         elif kind == "sensitive-field":
             rule, priority = "sensitive-field", 80
+        elif kind == "unknown-flag" and score >= 70:
+            rule, priority = "unknown-flag-like", 70
         else:
             continue
         evidence = tuple(

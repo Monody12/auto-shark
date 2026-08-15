@@ -204,3 +204,20 @@ def test_early_schema_eleven_database_repairs_slice_three_tables(tmp_path) -> No
         "manual_task_signal",
         "manual_task_evidence",
     }.issubset(set(database.table_names()))
+
+
+def test_schema_twelve_database_migrates_to_m4_detector_schema(tmp_path) -> None:
+    database = Database(tmp_path / "project.sqlite")
+    database.initialize()
+    with database.connect() as connection:
+        connection.execute("PRAGMA user_version = 12")
+    database.initialize()
+    assert {
+        "detector_run",
+        "detector_skip",
+        "behavior_event",
+        "behavior_event_evidence",
+        "behavior_event_run",
+    }.issubset(set(database.table_names()))
+    with database.connect() as connection:
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []

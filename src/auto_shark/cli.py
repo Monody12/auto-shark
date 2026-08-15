@@ -13,10 +13,12 @@ from typing import Optional
 from .analysis import analyze_http
 from .body import extract_http_body
 from .config import Settings
+from .detectors import detect_project
 from .engines.tshark import find_tshark, probe_tshark
 from .files.carve import carve_project
 from .ftp import index_ftp
 from .inventory import index_summary
+from .m4_queries import query_findings, query_timeline
 from .manual_queue import rebuild_manual_queue, update_manual_task_state
 from .pipeline import scan_project
 from .project import create_project, inspect_project
@@ -107,6 +109,23 @@ def _parser() -> argparse.ArgumentParser:
     triage.add_argument("--max-field-bytes", type=int, default=4096)
     triage.add_argument("--window-bytes", type=int, default=1024 * 1024)
 
+    detect = commands.add_parser("detect", help="run bounded explainable CTF detectors")
+    detect.add_argument("project", type=Path)
+    detect.add_argument("--max-evidence", type=int, default=10_000)
+    detect.add_argument("--max-evidence-bytes", type=int, default=64 * 1024 * 1024)
+    detect.add_argument("--max-total-bytes", type=int, default=256 * 1024 * 1024)
+    detect.add_argument("--max-matches", type=int, default=128)
+    detect.add_argument("--max-candidates", type=int, default=1024)
+    detect.add_argument("--chunk-size", type=int, default=1024 * 1024)
+    detect.add_argument("--max-transactions", type=int, default=10_000)
+    detect.add_argument("--max-parameters", type=int, default=1024)
+    detect.add_argument("--max-parameter-bytes", type=int, default=4096)
+    detect.add_argument("--max-events", type=int, default=10_000)
+    detect.add_argument("--max-findings", type=int, default=1000)
+    detect.add_argument("--max-preview-bytes", type=int, default=256)
+    detect.add_argument("--max-webshell-fields", type=int, default=100_000)
+    detect.add_argument("--max-webshell-value-bytes", type=int, default=64 * 1024)
+
     ftp = commands.add_parser("index-ftp", help="correlate and export bounded FTP transfers")
     ftp.add_argument("project", type=Path)
     ftp.add_argument("--tshark", type=Path, help="explicit path to tshark executable")
@@ -116,9 +135,7 @@ def _parser() -> argparse.ArgumentParser:
     ftp.add_argument("--max-transfer-bytes", type=int, default=256 * 1024 * 1024)
     ftp.add_argument("--max-total-bytes", type=int, default=512 * 1024 * 1024)
 
-    telnet = commands.add_parser(
-        "index-telnet", help="index bounded directional Telnet dialogues"
-    )
+    telnet = commands.add_parser("index-telnet", help="index bounded directional Telnet dialogues")
     telnet.add_argument("project", type=Path)
     telnet.add_argument("--tshark", type=Path, help="explicit path to tshark executable")
     telnet.add_argument("--max-metadata-frames", type=int, default=100_000)
@@ -180,6 +197,28 @@ def _parser() -> argparse.ArgumentParser:
     queue.add_argument("--max-detail-bytes", type=int, default=4096)
     queue.add_argument("--max-tasks", type=int, default=10_000)
     queue.add_argument("--max-unsupported-tasks", type=int, default=25)
+
+    findings = commands.add_parser("findings", help="query bounded candidates and findings")
+    findings.add_argument("project", type=Path)
+    findings.add_argument("--candidate-offset", type=int, default=0)
+    findings.add_argument("--candidate-limit", type=int, default=100)
+    findings.add_argument("--finding-offset", type=int, default=0)
+    findings.add_argument("--finding-limit", type=int, default=100)
+    findings.add_argument("--max-signals", type=int, default=1000)
+    findings.add_argument("--max-evidence-links", type=int, default=10_000)
+    findings.add_argument("--max-detail-bytes", type=int, default=4096)
+
+    timeline = commands.add_parser("timeline", help="query the static WebShell timeline")
+    timeline.add_argument("project", type=Path)
+    timeline.add_argument("--event-kind")
+    timeline.add_argument("--status")
+    timeline.add_argument("--frame-start", type=int)
+    timeline.add_argument("--frame-end", type=int)
+    timeline.add_argument("--include-duplicates", action="store_true")
+    timeline.add_argument("--offset", type=int, default=0)
+    timeline.add_argument("--limit", type=int, default=100)
+    timeline.add_argument("--max-evidence-links", type=int, default=10_000)
+    timeline.add_argument("--max-detail-bytes", type=int, default=4096)
 
     task = commands.add_parser("manual-task", help="update one manual-analysis task state")
     task.add_argument("project", type=Path)
@@ -255,6 +294,36 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     offset=args.offset,
                     limit=args.limit,
                     max_signals=args.max_signals,
+                    max_evidence_links=args.max_evidence_links,
+                    max_detail_bytes=args.max_detail_bytes,
+                ).to_json()
+            )
+            return 0
+        if args.command == "findings":
+            print(
+                query_findings(
+                    args.project,
+                    candidate_offset=args.candidate_offset,
+                    candidate_limit=args.candidate_limit,
+                    finding_offset=args.finding_offset,
+                    finding_limit=args.finding_limit,
+                    max_signals=args.max_signals,
+                    max_evidence_links=args.max_evidence_links,
+                    max_detail_bytes=args.max_detail_bytes,
+                ).to_json()
+            )
+            return 0
+        if args.command == "timeline":
+            print(
+                query_timeline(
+                    args.project,
+                    event_kind=args.event_kind,
+                    status=args.status,
+                    frame_start=args.frame_start,
+                    frame_end=args.frame_end,
+                    include_duplicates=args.include_duplicates,
+                    offset=args.offset,
+                    limit=args.limit,
                     max_evidence_links=args.max_evidence_links,
                     max_detail_bytes=args.max_detail_bytes,
                 ).to_json()
@@ -367,6 +436,27 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     max_candidates=args.max_candidates,
                     max_field_bytes=args.max_field_bytes,
                     window_bytes=args.window_bytes,
+                ).to_json()
+            )
+            return 0
+        if args.command == "detect":
+            print(
+                detect_project(
+                    args.project,
+                    max_evidence=args.max_evidence,
+                    max_evidence_bytes=args.max_evidence_bytes,
+                    max_total_bytes=args.max_total_bytes,
+                    max_matches=args.max_matches,
+                    max_candidates=args.max_candidates,
+                    chunk_size=args.chunk_size,
+                    max_transactions=args.max_transactions,
+                    max_parameters=args.max_parameters,
+                    max_parameter_bytes=args.max_parameter_bytes,
+                    max_events=args.max_events,
+                    max_findings=args.max_findings,
+                    max_preview_bytes=args.max_preview_bytes,
+                    max_webshell_fields=args.max_webshell_fields,
+                    max_webshell_value_bytes=args.max_webshell_value_bytes,
                 ).to_json()
             )
             return 0

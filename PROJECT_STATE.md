@@ -1,6 +1,6 @@
 # Auto-Shark Project State
 
-Updated: 2026-08-13, Asia/Shanghai
+Updated: 2026-08-15, Asia/Shanghai
 
 This is the canonical resume checkpoint. Update it after every tested slice.
 
@@ -13,9 +13,14 @@ candidate ranking, static file analysis, and constrained optional Linux jobs.
 
 ## Current milestone
 
-M3 - FTP, Telnet, files, and protocol/manual triage.
+M5 - Investigation state and reports.
 
-Status: active. M0, M1, and M2 exit criteria are complete.
+Status: active. M0, M1, M2, M3, and M4 exit criteria are complete.
+
+The M4 schema 13, bounded detector, static-analysis, CLI, public-sample, and
+verification contract is recorded in `docs/M4_IMPLEMENTATION.md`. Implementation
+is authorized in three checkpoints: 4A unknown candidates, 4B SQL-injection
+behavior, then 4C WebShell timeline and bounded queries.
 
 The first M3 slice is active. Its FTP structured metadata, explicit frame
 correlation, bounded TCP reuse, static export, and no-unpack contract is
@@ -469,6 +474,66 @@ Environment paths below are local evidence, not production defaults:
   stable. Four projects rehash every Blob successfully. The WebShell runtime
   retains one pre-existing Windows-unopenable historical Blob path in its
   database; it is recorded as residual machine-local risk and was not changed.
+- M4 checkpoint 4A adds schema 13 detector-run/skip provenance and bounded
+  unknown flag-like candidate scanning. Unknown printable brace tokens rank 78;
+  mixed-class long tokens rank 45 and do not enter the manual queue. Known
+  prefixes, binary brace data, URLs, ordinary assignments, and Base64-looking
+  values are excluded. Exact candidate evidence, chunk-boundary overlap,
+  per-input/total/result budgets, rerun stability, and queue state preservation
+  are covered by new tests.
+- M4 4A verification passes Ruff and the full Windows CPython 3.11 suite:
+  142 tests at 86 percent coverage. CPython 3.9.25 passes all 142 tests. Five
+  clean acceptance projects each ran `detect` twice. Telnet, FTP, multipart,
+  and HTTP-form completed with zero new unknown candidates; existing Telnet and
+  multipart rank-100 candidates and HTTP password rank 80 remain unchanged.
+  WebShell has zero new candidates but remains `partial` because of its
+  pre-existing Windows-unopenable historical Blob path. All five databases pass
+  integrity and foreign-key checks; generated detector runs retain provenance.
+- M4 checkpoint 4B adds bounded HTTP query and complete URL-form parameter
+  inspection, byte-accurate raw query evidence, multi-signal SQL-injection
+  classification, nearest clean-request comparisons, response status/length
+  evidence, explicit partial confidence caps, stable per-request events,
+  semantic duplicate links, endpoint/parameter findings, and manual-queue
+  refresh. Parameter, event, finding, preview, and response-completeness limits
+  are covered, including reruns over existing findings and failed tool-run
+  provenance.
+- Final 4B verification passes Ruff. Windows CPython 3.11.15 reports 154 tests
+  at 87 percent total coverage; CPython 3.9.25 passes the same 154 tests. Each
+  of the five local acceptance projects ran the integrated detector twice with
+  zero SQL events or findings. Existing Telnet/multipart rank-100 candidates,
+  the HTTP-form rank-80 candidate, and Telnet's `in-progress` manual state are
+  unchanged. Four projects rehash every Blob; the WebShell project retains its
+  one previously recorded missing historical Blob, reports `partial`, and all
+  five databases pass integrity, foreign keys, and empty-jobs checks.
+- The machine-local public `markofu/workshop` SQLi teaching capture ran twice
+  with one stable partial event and one finding: request frame 8, response frame
+  10, target `GET /sql2.php#q2`, signal `boolean-expression`, and exact raw URI
+  range `[22,52)`. It has no clean comparison request, so confidence remains
+  0.68 and status remains `partial`. One open finding-review task is stable;
+  integrity, foreign keys, completed detector tool runs, and empty jobs pass.
+- M4 checkpoint 4C adds a bounded static PHP WebShell classifier over already
+  persisted complete transforms. It records one operation per selected POST,
+  request/response/evidence links, normalized targets, semantic duplicate
+  groups, payload metadata without payload bytes, and explicit partial,
+  budget-limited, and failed provenance. The `timeline` and `findings` JSON
+  queries independently cap pages, detail bytes, signals, and evidence links.
+- Final M4 verification passes Ruff. Windows CPython 3.11.15 reports 160 tests
+  at 86 percent total coverage; CPython 3.9.25 passes the same 160 tests.
+  `uv build` succeeds and the wheel contains `detectors.py`,
+  `sql_detection.py`, `webshell_detection.py`, and `m4_queries.py`.
+- The existing WebShell acceptance project still returns 19 ordered events,
+  eight default semantic groups, and one `static-webshell-activity` finding.
+  Event kinds remain one system-information, fifteen directory-listing, one
+  file-write, and two file-read operations. Frames 1068/1144 map the write to
+  `D:\wamp64\www\upload\6666.jpg`; frames 1364/1367 and 1721/1724 map reads
+  of `hello.zip` and `1.php`. Query output contains no inline Blob bytes.
+- M4 is complete: all three detector checkpoints, the five private acceptance
+  captures, the machine-local public SQL sample, stable bounded CLI schemas,
+  manual-state preservation, integrity/foreign-key/jobs checks, both supported
+  Python versions, and package-content checks are evidenced. Two missing paths
+  in the historical WebShell runtime Blob store are a machine-local residual
+  risk recorded in `PROJECT_HANDOFF.local.md`; neither is required by the
+  stable 19-event/eight-group detector result.
 
 ## Active decisions
 
@@ -520,7 +585,6 @@ Environment paths below are local evidence, not production defaults:
 
 ## Next executable step
 
-Plan and contract M4 from `docs/ROADMAP.md`: known/unknown flag detectors,
-SQL-injection behavior reconstruction, and the WebShell operation timeline.
-Reuse the schema 12 coverage, findings, and manual queue without reading answer
-files or opening captured artifacts.
+Write the M5 implementation contract, then implement review state and notes,
+stable report JSON, self-contained offline HTML plus evidence-directory export,
+and reopen/export determinism in that order.

@@ -36,7 +36,7 @@ all exit criteria are verified and recorded in `PROJECT_STATE.md`.
   triage, with stable bounded transaction/stream query surfaces and versioned
   score signals. Generic unstructured unknown-token heuristics remain M4 scope.
 
-## M3 - FTP, Telnet, files, and unknown triage (active, estimate 4 days)
+## M3 - FTP, Telnet, files, and unknown triage (complete, estimate 4 days)
 
 - FTP control/PASV/data correlation and static export.
   Status: complete with explicit setup/command frame correlation, bounded TCP
@@ -47,22 +47,33 @@ all exit criteria are verified and recorded in `PROJECT_STATE.md`.
   parsing, exact TCP source ranges, prompt/input/echo relations, explicit
   bounded states, candidate linkage, and stable bounded JSON queries.
 - File magic, declared/actual type mismatch, structural end, trailing-data scan.
-  Status: reusable bounded carving is complete for HTTP/transform evidence;
-  general protocol correlation, type mismatch, and manual triage remain M3.
+  Status: complete for reusable bounded carving over HTTP/transform evidence,
+  conservative multipart correlation, declared/actual type mismatch findings,
+  structural ends, trailing ranges, and persistent manual triage.
 - Protocol/conversation summary and manual-analysis queue.
   Status: complete with schema 11 capture inventory, schema 12 compatibility
   repair, bounded protocol/conversation profiles, explicit coverage states,
   conservative multipart correlation, HTTP status/body contradiction findings,
   and persistent idempotent manual queue plus summary/queue/state CLI queries.
 
-## M4 - CTF detectors and CLI acceptance (pending, estimate 4 days)
+## M4 - CTF detectors and CLI acceptance (complete, estimate 4 days)
 
 - Known flag search and unknown flag-like candidate rules.
+  Status: complete with bounded exact-range detection, conservative false-positive
+  exclusions, stable ranking, rerun provenance, and manual-queue integration.
 - SQL injection behavior reconstruction.
+  Status: complete for bounded query/form inputs, static multi-signal detection,
+  clean-request comparisons, partial confidence caps, stable events/findings,
+  public-sample acceptance, and explicit failure/budget provenance.
 - WebShell detection, decoded operation timeline, and deduplication.
+  Status: complete with persisted-transform-only static classification,
+  normalized target timelines, semantic repeat groups, and bounded queries.
 - All five acceptance captures pass without detectors reading answer oracles.
+  Status: complete under the schema 13 contract in
+  `docs/M4_IMPLEMENTATION.md`, including public SQL-sample provenance and the
+  exact 19-event/eight-group WebShell acceptance result.
 
-## M5 - Investigation state and reports (pending, estimate 3 days)
+## M5 - Investigation state and reports (active, estimate 3 days)
 
 - Review states and notes.
 - Stable machine-readable JSON schema.

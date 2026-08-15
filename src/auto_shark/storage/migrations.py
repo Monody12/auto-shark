@@ -970,4 +970,80 @@ MIGRATIONS = (
     CREATE INDEX IF NOT EXISTS idx_manual_task_subject
         ON manual_task(capture_id, subject_kind, subject_id);
     """,
+    """
+    CREATE TABLE IF NOT EXISTS detector_run (
+        id INTEGER PRIMARY KEY,
+        run_id TEXT NOT NULL UNIQUE,
+        capture_id INTEGER NOT NULL REFERENCES capture(id) ON DELETE CASCADE,
+        detector_set TEXT NOT NULL,
+        detector_version TEXT NOT NULL,
+        policy_json TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (
+            status IN ('completed','partial','failed','budget-limited')
+        ),
+        inputs_processed INTEGER NOT NULL CHECK (inputs_processed >= 0),
+        inputs_skipped INTEGER NOT NULL CHECK (inputs_skipped >= 0),
+        candidates INTEGER NOT NULL CHECK (candidates >= 0),
+        findings INTEGER NOT NULL CHECK (findings >= 0),
+        events INTEGER NOT NULL CHECK (events >= 0),
+        started_at TEXT NOT NULL,
+        ended_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS detector_skip (
+        id INTEGER PRIMARY KEY,
+        detector_run_id INTEGER NOT NULL REFERENCES detector_run(id) ON DELETE CASCADE,
+        scope_kind TEXT NOT NULL,
+        scope_id TEXT,
+        reason TEXT NOT NULL,
+        count INTEGER NOT NULL CHECK (count > 0),
+        detail_json TEXT NOT NULL,
+        UNIQUE (detector_run_id, scope_kind, scope_id, reason)
+    );
+
+    CREATE TABLE IF NOT EXISTS behavior_event (
+        id INTEGER PRIMARY KEY,
+        event_id TEXT NOT NULL UNIQUE,
+        capture_id INTEGER NOT NULL REFERENCES capture(id) ON DELETE CASCADE,
+        transaction_id INTEGER REFERENCES transaction_record(id) ON DELETE SET NULL,
+        protocol_message_id INTEGER REFERENCES protocol_message(id) ON DELETE SET NULL,
+        detector TEXT NOT NULL,
+        detector_version TEXT NOT NULL,
+        event_kind TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (
+            status IN ('complete','partial','unavailable','failed','budget-limited')
+        ),
+        request_frame INTEGER,
+        response_frame INTEGER,
+        target TEXT,
+        semantic_key TEXT NOT NULL,
+        confidence REAL NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
+        detail_json TEXT NOT NULL,
+        duplicate_of INTEGER REFERENCES behavior_event(id) ON DELETE SET NULL,
+        created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS behavior_event_evidence (
+        event_id INTEGER NOT NULL REFERENCES behavior_event(id) ON DELETE CASCADE,
+        evidence_id INTEGER NOT NULL REFERENCES evidence(id) ON DELETE CASCADE,
+        role TEXT NOT NULL,
+        PRIMARY KEY (event_id, evidence_id, role)
+    ) WITHOUT ROWID;
+
+    CREATE TABLE IF NOT EXISTS behavior_event_run (
+        event_id INTEGER NOT NULL REFERENCES behavior_event(id) ON DELETE CASCADE,
+        detector_run_id INTEGER NOT NULL REFERENCES detector_run(id) ON DELETE CASCADE,
+        PRIMARY KEY (event_id, detector_run_id)
+    ) WITHOUT ROWID;
+
+    CREATE INDEX IF NOT EXISTS idx_detector_run_capture
+        ON detector_run(capture_id, started_at);
+    CREATE INDEX IF NOT EXISTS idx_detector_skip_run
+        ON detector_skip(detector_run_id, reason);
+    CREATE INDEX IF NOT EXISTS idx_behavior_event_capture
+        ON behavior_event(capture_id, request_frame, id);
+    CREATE INDEX IF NOT EXISTS idx_behavior_event_kind
+        ON behavior_event(capture_id, event_kind, request_frame);
+    CREATE INDEX IF NOT EXISTS idx_behavior_event_duplicate ON behavior_event(duplicate_of);
+    """,
 )

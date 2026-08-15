@@ -22,8 +22,8 @@ uv run auto-shark analyze capture.pcapng `
   --tshark C:\path\to\tshark.exe
 ```
 
-Reports and protocol-specific M3 adapters remain future work; consult
-`PROJECT_STATE.md` for the exact tested checkpoint.
+Reports, the Windows GUI, plugins, and release packaging remain future work;
+consult `PROJECT_STATE.md` for the exact tested checkpoint.
 
 One indexed HTTP body can currently be extracted with a hard decoded-byte cap:
 
