@@ -316,6 +316,9 @@ def _parser() -> argparse.ArgumentParser:
     export.add_argument("--max-evidence-total-bytes", type=int, default=64 * 1024 * 1024)
     _add_report_limits(export)
 
+    gui = commands.add_parser("gui", help="launch the investigation UI (optional gui extra)")
+    gui.add_argument("--project", type=Path, help="open this project directory at startup")
+
     probe = commands.add_parser("probe", help="probe TShark capabilities")
     probe.add_argument("--tshark", type=Path, help="explicit path to tshark executable")
     probe.add_argument("--json", action="store_true", help="emit the complete JSON profile")
@@ -351,6 +354,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         parser.print_help()
         return 0
     try:
+        if args.command == "gui":
+            from .gui import run_gui
+
+            return run_gui(args.project)
         if args.command == "report":
             print(collect_report(args.project, limits=_report_limits(args)).to_json(), end="")
             return 0

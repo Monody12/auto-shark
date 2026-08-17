@@ -13,12 +13,13 @@ candidate ranking, static file analysis, and constrained optional Linux jobs.
 
 ## Current milestone
 
-M6 - PySide6 investigation UI.
+M7 - Plugins and Linux enhancement node.
 
-Status: active. M0 through M5 exit criteria are complete. The M5 schema 14,
+Status: active. M0 through M6 exit criteria are complete. The M5 schema 14,
 investigation-state, report, export, and verification contract is recorded in
-`docs/M5_IMPLEMENTATION.md`; all three checkpoints 5A/5B/5C are implemented
-and verified.
+`docs/M5_IMPLEMENTATION.md`. The M6 GUI service/threading/view contract is
+recorded in `docs/M6_IMPLEMENTATION.md`; all three checkpoints 6A/6B/6C are
+implemented and verified.
 
 The first M3 slice is active. Its FTP structured metadata, explicit frame
 correlation, bounded TCP reuse, static export, and no-unpack contract is
@@ -581,6 +582,35 @@ Environment paths below are local evidence, not production defaults:
   violations, and empty `jobs` directories.
 - M5 is complete: investigation state, deterministic JSON reporting, offline
   HTML/evidence export, and reopen/export determinism are all evidenced.
+- M6 checkpoint 6A adds the Qt-free `gui` service facade, availability probe,
+  lazy `auto-shark gui` CLI entry with an actionable install hint, and the
+  ordered bounded analysis-stage builder (analyze, scan, triage, detect,
+  inventory). Services wrap the existing query/mutation/export surfaces and
+  return their parsed bounded JSON payloads; importing `auto_shark.cli` is
+  verified by subprocess test to pull neither PySide6 nor widget modules.
+- M6 checkpoint 6B adds the PySide6 main window, stage/single-run QThread
+  workers with per-stage summary signals, and nine bounded pages (overview
+  metrics plus report JSON, HTTP transactions with URI filter and pagination,
+  streams, Telnet dialogues, candidates/findings with signal/evidence detail
+  JSON, WebShell timeline, manual queue with state changes, notes with
+  review-mark workflow, and bundle export). Pages render explicit no-project,
+  empty, error, and `showing X of Y` truncation states. Widget tests run
+  offscreen and skip without the gui extra; worker stage/failure/cancel
+  behavior is covered with stubbed stages.
+- Final M6 verification passes Ruff; Windows CPython 3.11.15 reports 183
+  tests at 85 percent total coverage with the gui extra installed; CPython
+  3.9.25 reports 176 passed plus one expected widget-test skip. `uv build`
+  succeeds and the wheel contains all five `auto_shark/gui/` modules.
+- The real-sample smoke opened all five acceptance projects offscreen and
+  rendered every page without an error banner. Per-page row counts match the
+  recorded database facts: Telnet 1 candidate/1 queue task/1 dialogue;
+  HTTP-form 15 transactions/3 candidates/15 tasks; WebShell 24 transactions/
+  1 finding/8 deduplicated timeline events. GUI bundle exports equal the M5
+  CLI exports (31/9+1 skip/2/7/190+4 skips). The Telnet project completed a
+  real scan -> triage -> detect -> inventory refresh through the stage worker
+  with TShark 4.6.7. Interactive desktop acceptance remains M8 scope.
+- M6 is complete: the CLI stays PySide6-free on 3.9, and the GUI reuses only
+  the bounded, tested read models.
 
 ## Active decisions
 
@@ -632,8 +662,9 @@ Environment paths below are local evidence, not production defaults:
 
 ## Next executable step
 
-Write `docs/M6_IMPLEMENTATION.md` fixing the PySide6 GUI contract: reusable
-read-model services over the existing bounded query/report surfaces, the
-`gui` entry point and optional dependency group, project open/create flow with
-progress/cancellation, and the view list with empty/partial/failed states.
-Implement it in tested checkpoints starting with the application shell.
+Write `docs/M7_IMPLEMENTATION.md` fixing the plugin contract: plugin manifest
+schema, in-process/external adapter limits, the `ctf-stego-toolkit` JSON
+output/output-directory requirement, bounded local image analysis, the
+constrained SSH/SFTP Linux runner, and capability/isolation/timeout/hash
+verification gates. Then implement it in tested checkpoints starting with the
+manifest probe and local adapter.

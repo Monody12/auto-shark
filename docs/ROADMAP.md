@@ -90,14 +90,28 @@ all exit criteria are verified and recorded in `PROJECT_STATE.md`.
   byte-identical across all five acceptance projects with integrity,
   foreign-key, and empty-jobs checks recorded in `PROJECT_STATE.md`.
 
-## M6 - PySide6 investigation UI (active, estimate 6 days)
+## M6 - PySide6 investigation UI (complete, estimate 6 days)
 
 - Project creation/opening and analysis progress/cancellation.
+  Status: complete with a lazy `gui` CLI entry, open/create dialogs, a
+  `QThread` staged pipeline runner, per-stage progress with summaries, and
+  cooperative between-stage cancellation that never kills bounded work.
 - Overview, paired HTTP, streams/messages, search, findings, files, lineage.
+  Status: complete through nine bounded pages (overview metrics and report
+  JSON, HTTP transactions with URI filter and pagination, streams, Telnet
+  dialogues with record detail, candidates/findings with signal and evidence
+  detail, WebShell timeline, manual queue, notes, and export); candidate
+  search results surface through the bounded findings query.
 - Notes/review workflow and report export.
+  Status: complete with note add/update, review-mark upsert, manual-task
+  state changes, and offline bundle export with manifest and skip reporting.
 - Responsive Windows desktop behavior and empty/error/partial states.
+  Status: complete for construction, rendering, empty/error/truncation
+  states, and real-sample rendering verified offscreen on Windows Python
+  3.11; interactive desktop acceptance remains part of M8 clean-machine
+  validation.
 
-## M7 - Plugins and Linux enhancement node (pending, estimate 5 days)
+## M7 - Plugins and Linux enhancement node (active, estimate 5 days)
 
 - Plugin manifest and in-process/external adapter limits.
 - Stable JSON report/output-dir support for `ctf-stego-toolkit`.
