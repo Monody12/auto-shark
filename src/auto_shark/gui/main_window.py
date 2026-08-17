@@ -32,8 +32,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..config import Settings
 from ..project import ProjectInfo, create_project
 from .services import PAGE_LIMIT, ProjectServices, resolve_tshark
+from .settings import GuiSettings, load_settings, save_settings
 from .workers import SingleRunWorker, StageWorker
 
 PAGE_NAMES = (
@@ -79,6 +81,7 @@ class MainWindow(QMainWindow):
         self.services: Optional[ProjectServices] = None
         self._worker: Optional[StageWorker] = None
         self._single_worker: Optional[SingleRunWorker] = None
+        self._settings = load_settings()
         self._offsets: dict[str, int] = {}
         self._pages: dict[str, QWidget] = {}
         self._banners: dict[str, QLabel] = {}
@@ -103,13 +106,18 @@ class MainWindow(QMainWindow):
     def _build_menu(self) -> None:
         menu = self.menuBar()
         file_menu = menu.addMenu("&File")
-        action = file_menu.addAction("&Open project…")
+        action = file_menu.addAction("&Open capture…")
+        action.triggered.connect(self._open_capture_dialog)
+        action = file_menu.addAction("Open &project…")
         action.triggered.connect(self._open_project_dialog)
         action = file_menu.addAction("&New project from capture…")
         action.triggered.connect(self._new_project_dialog)
         file_menu.addSeparator()
         action = file_menu.addAction("E&xit")
         action.triggered.connect(self.close)
+        edit_menu = menu.addMenu("&Edit")
+        action = edit_menu.addAction("&Settings…")
+        action.triggered.connect(self._settings_dialog)
         analysis_menu = menu.addMenu("&Analysis")
         action = analysis_menu.addAction("&Run full analysis")
         action.triggered.connect(self.run_analysis)
@@ -485,6 +493,175 @@ class MainWindow(QMainWindow):
         if directory:
             self.open_project(Path(directory))
 
+    def _default_project_root(self, capture: Path) -> Path:
+        return Settings.from_environment().project_root / f"{capture.stem}.auto-shark"
+
+    def _tshark_path(self) -> Optional[Path]:
+        configured = self._settings.tshark_path
+        if configured and Path(configured).is_file():
+            return Path(configured)
+        return resolve_tshark(None)
+
+    def _report_synced_path_error(self, error: Exception) -> None:
+        QMessageBox.warning(
+            self,
+            "Auto-Shark",
+            "Projects cannot live in a synced directory (for example OneDrive).\n"
+            f"Use the default machine-local location instead:\n"
+            f"{Settings.from_environment().project_root}",
+        )
+
+    def _open_capture_dialog(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Open capture", "", "Captures (*.pcap *.pcapng);;All files (*)"
+        )
+        if not path:
+            return
+        capture = Path(path)
+        project_dir = self._default_project_root(capture)
+        created = not (project_dir / "project.json").is_file()
+        try:
+            if created:
+                create_project(capture, project_dir)
+        except (OSError, ValueError, FileExistsError) as error:
+            if "synced" in str(error):
+                self._report_synced_path_error(error)
+            else:
+                QMessageBox.critical(self, "Auto-Shark", f"Cannot create project: {error}")
+            return
+        self.open_project(project_dir)
+        tshark = self._tshark_path()
+        if tshark is None:
+            QMessageBox.warning(
+                self,
+                "Auto-Shark",
+                "TShark was not found.\n"
+                "Install Wireshark, then set the path in Edit > Settings…",
+            )
+            return
+        self.run_analysis(capture=capture if created else None, tshark=tshark)
+
+    def _settings_dialog(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Auto-Shark settings")
+        form = QFormLayout(dialog)
+
+        self._settings_tshark = QLineEdit(self._settings.tshark_path or "")
+        tshark_row = QHBoxLayout()
+        tshark_row.addWidget(self._settings_tshark, 1)
+        browse = QPushButton("Browse…")
+        probe = QPushButton("Probe")
+        tshark_row.addWidget(browse)
+        tshark_row.addWidget(probe)
+        tshark_widget = QWidget()
+        tshark_widget.setLayout(tshark_row)
+        form.addRow("TShark executable", tshark_widget)
+
+        self._settings_remote_host = QLineEdit(self._settings.remote_host or "")
+        form.addRow("Remote host (optional)", self._settings_remote_host)
+        self._settings_ssh = QLineEdit(self._settings.ssh_path or "")
+        self._settings_sftp = QLineEdit(self._settings.sftp_path or "")
+        self._settings_remote_root = QLineEdit(self._settings.remote_root)
+        self._settings_remote_paths = QLineEdit("/usr/bin/python3")
+        form.addRow("ssh executable", self._settings_ssh)
+        form.addRow("sftp executable", self._settings_sftp)
+        form.addRow("Remote working root", self._settings_remote_root)
+        form.addRow("Remote paths to probe", self._settings_remote_paths)
+        remote_probe = QPushButton("Probe remote node")
+        form.addRow("", remote_probe)
+
+        self._settings_output = QPlainTextEdit()
+        self._settings_output.setReadOnly(True)
+        self._settings_output.setMaximumHeight(140)
+        form.addRow("Probe result", self._settings_output)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        form.addRow(buttons)
+
+        def pick_tshark() -> None:
+            path, _ = QFileDialog.getOpenFileName(dialog, "Choose tshark executable")
+            if path:
+                self._settings_tshark.setText(path)
+
+        def run_probe() -> None:
+            from ..engines.tshark import probe_tshark
+
+            text = self._settings_tshark.text().strip()
+            if not text:
+                self._settings_output.setPlainText("Enter a TShark path first.")
+                return
+            try:
+                result = probe_tshark(Path(text))
+            except (OSError, ValueError) as error:
+                self._settings_output.setPlainText(f"error: {error}")
+                return
+            features = sum(1 for value in result.features.values() if value)
+            self._settings_output.setPlainText(
+                f"{result.version_line}\nusable: {'yes' if result.usable else 'no'} | "
+                f"capabilities: {features}/{len(result.features)}"
+            )
+
+        def run_remote_probe() -> None:
+            from ..remote import RemoteNodeConfig, find_ssh_tools, probe_remote_node
+
+            host = self._settings_remote_host.text().strip()
+            if not host:
+                self._settings_output.setPlainText("Enter a remote host first.")
+                return
+            ssh, sftp = find_ssh_tools(
+                Path(self._settings_ssh.text().strip())
+                if self._settings_ssh.text().strip()
+                else None,
+                Path(self._settings_sftp.text().strip())
+                if self._settings_sftp.text().strip()
+                else None,
+            )
+            if ssh is None or sftp is None:
+                self._settings_output.setPlainText("error: ssh and sftp clients not found")
+                return
+            paths = [
+                item.strip()
+                for item in self._settings_remote_paths.text().split(",")
+                if item.strip()
+            ]
+            try:
+                probe = probe_remote_node(
+                    RemoteNodeConfig(
+                        host=host,
+                        ssh_executable=ssh,
+                        sftp_executable=sftp,
+                        remote_root=self._settings_remote_root.text().strip()
+                        or ".auto-shark-jobs",
+                    ),
+                    paths,
+                )
+            except (OSError, ValueError) as error:
+                self._settings_output.setPlainText(f"error: {error}")
+                return
+            self._settings_output.setPlainText(
+                json.dumps(probe, ensure_ascii=False, sort_keys=True, indent=2)
+            )
+
+        browse.clicked.connect(pick_tshark)
+        probe.clicked.connect(run_probe)
+        remote_probe.clicked.connect(run_remote_probe)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        self._settings = GuiSettings(
+            tshark_path=self._settings_tshark.text().strip() or None,
+            remote_host=self._settings_remote_host.text().strip() or None,
+            ssh_path=self._settings_ssh.text().strip() or None,
+            sftp_path=self._settings_sftp.text().strip() or None,
+            remote_root=self._settings_remote_root.text().strip() or ".auto-shark-jobs",
+        )
+        try:
+            save_settings(self._settings)
+        except OSError as error:
+            QMessageBox.critical(self, "Auto-Shark", f"Cannot save settings: {error}")
+
     def _new_project_dialog(self) -> None:
         dialog = QDialog(self)
         dialog.setWindowTitle("New project from capture")
@@ -518,9 +695,13 @@ class MainWindow(QMainWindow):
         form.addRow(buttons)
 
         def pick_capture() -> None:
-            path, _ = QFileDialog.getOpenFileName(dialog, "Choose capture")
+            path, _ = QFileDialog.getOpenFileName(
+                dialog, "Choose capture", "", "Captures (*.pcap *.pcapng);;All files (*)"
+            )
             if path:
                 capture_edit.setText(path)
+                if not project_edit.text().strip():
+                    project_edit.setText(str(self._default_project_root(Path(path))))
 
         def pick_project() -> None:
             path = QFileDialog.getExistingDirectory(dialog, "Choose project directory")
@@ -540,15 +721,23 @@ class MainWindow(QMainWindow):
         try:
             info = create_project(Path(capture_text), Path(project_text))
         except (OSError, ValueError, FileExistsError) as error:
-            QMessageBox.critical(self, "Auto-Shark", f"Cannot create project: {error}")
+            if "synced" in str(error):
+                self._report_synced_path_error(error)
+            else:
+                QMessageBox.critical(self, "Auto-Shark", f"Cannot create project: {error}")
             return
         self.open_project(info.root)
-        tshark = resolve_tshark(Path(tshark_text) if tshark_text else None)
+        tshark = (
+            Path(tshark_text)
+            if tshark_text and Path(tshark_text).is_file()
+            else self._tshark_path()
+        )
         if tshark is None:
             QMessageBox.warning(
                 self,
                 "Auto-Shark",
-                "TShark was not found; run the metadata stage after setting it up.",
+                "TShark was not found.\n"
+                "Install Wireshark, then set the path in Edit > Settings…",
             )
             return
         self.run_analysis(capture=Path(capture_text), tshark=tshark)
@@ -561,12 +750,13 @@ class MainWindow(QMainWindow):
         if self.services is None:
             QMessageBox.information(self, "Auto-Shark", "Open a project first.")
             return
-        executable = tshark or resolve_tshark(None)
+        executable = tshark or self._tshark_path()
         if executable is None:
             QMessageBox.warning(
                 self,
                 "Auto-Shark",
-                "TShark was not found. Install it or set AUTO_SHARK_TSHARK.",
+                "TShark was not found. Install Wireshark, then use Edit > Settings… "
+                "to configure the path.",
             )
             return
         stages = self.services.analysis_stages(executable, capture=capture)

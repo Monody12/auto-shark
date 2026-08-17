@@ -40,11 +40,19 @@ business results. Each stage also accepts explicit byte/count budgets (see
 `auto-shark <command> --help`); when a budget is hit the skipped items are
 recorded, never silently dropped.
 
-Alternatively launch the GUI and use `File > New project from capture…`:
+Alternatively launch the GUI. `File > Open capture…` picks a .pcap/.pcapng
+directly, creates (or reopens) a machine-local project under
+`%LOCALAPPDATA%\AutoShark\projects`, and runs the staged analysis
+automatically. Configure TShark or the optional Linux node once in
+`Edit > Settings…` (the dialog probes both and persists the paths):
 
 ```powershell
 uv run auto-shark gui            # requires the optional gui extra
 ```
+
+Projects cannot live in synced directories such as OneDrive; the GUI
+defaults to the machine-local path above and explains the rule if a synced
+location is chosen.
 
 ## 3. Reading the results
 

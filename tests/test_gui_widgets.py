@@ -202,3 +202,57 @@ def test_stage_worker_cancel_skips_remaining_stages(qapp) -> None:
     assert ran == ["first"]
     assert events[-1][1] is False
     assert "cancelled" in events[-1][2]
+
+
+def test_settings_round_trip_and_tshark_resolution(qapp, tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    from auto_shark.gui.settings import GuiSettings, load_settings, save_settings
+
+    save_settings(GuiSettings(tshark_path=str(tmp_path / "tshark.exe")))
+    loaded = load_settings()
+    assert loaded.tshark_path == str(tmp_path / "tshark.exe")
+
+    (tmp_path / "tshark.exe").write_bytes(b"")
+    window = MainWindow()
+    assert window._settings.tshark_path == str(tmp_path / "tshark.exe")
+    assert window._tshark_path() == tmp_path / "tshark.exe"
+
+    save_settings(GuiSettings(tshark_path=None))
+    window2 = MainWindow()
+    assert window2._tshark_path() is None or window2._tshark_path().is_file()
+
+
+def test_open_capture_creates_machine_local_project(qapp, tmp_path, monkeypatch) -> None:
+    from PySide6.QtWidgets import QFileDialog
+
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    capture = tmp_path / "evidence.pcapng"
+    capture.write_bytes(b"pcap-data")
+
+    triggered = {}
+
+    def fake_run_analysis(self, *, capture=None, tshark=None):
+        triggered["capture"] = capture
+        triggered["tshark"] = tshark
+
+    (tmp_path / "tshark.exe").write_bytes(b"")
+    monkeypatch.setattr(MainWindow, "run_analysis", fake_run_analysis)
+    monkeypatch.setattr(
+        QFileDialog,
+        "getOpenFileName",
+        staticmethod(lambda *args, **kwargs: (str(capture), "")),
+    )
+    window = MainWindow()
+    window._settings = type(window._settings)(tshark_path=str(tmp_path / "tshark.exe"))
+    window._open_capture_dialog()
+
+    expected_root = tmp_path / "AutoShark" / "projects" / "evidence.auto-shark"
+    assert (expected_root / "project.json").is_file()
+    assert window.services is not None
+    assert triggered["capture"] == capture
+    assert triggered["tshark"] == tmp_path / "tshark.exe"
+
+    triggered.clear()
+    window._open_capture_dialog()
+    assert triggered["capture"] is None  # existing project: refresh stages only
+    assert (expected_root / "project.json").is_file()
