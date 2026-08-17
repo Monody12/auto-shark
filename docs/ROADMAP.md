@@ -111,29 +111,44 @@ all exit criteria are verified and recorded in `PROJECT_STATE.md`.
   3.11; interactive desktop acceptance remains part of M8 clean-machine
   validation.
 
-## M7 - Plugins and Linux enhancement node (active, estimate 5 days)
+## M7 - Plugins and Linux enhancement node (complete, estimate 5 days)
 
 - Plugin manifest and in-process/external adapter limits.
-  Status: complete for external analyzers at 7A under the schema 15 contract
-  in `docs/M7_IMPLEMENTATION.md`: validated `auto-shark.plugin/v1` manifests,
-  placeholder-only argument lists, bounded limits, isolated job directories,
-  and hashed outputs with explicit skips. The remote runner (7B) and the
-  `ctf-stego-toolkit` adapter (7C) remain pending.
+  Status: complete under the schema 15 contract in `docs/M7_IMPLEMENTATION.md`:
+  validated `auto-shark.plugin/v1` manifests, placeholder-only argument
+  lists, bounded limits, isolated job directories, and hashed outputs with
+  explicit skips.
 - Stable JSON report/output-dir support for `ctf-stego-toolkit`.
-  Status: pending; blocked on that toolkit independently providing the
-  required JSON output and explicit output-directory interface.
+  Status: complete through the shipped working-directory adapter
+  (`auto_shark/assets/cwd_adapter.py`): the toolkit runs unmodified inside
+  the isolated output directory, its terminal report is preserved verbatim
+  as hashed `stdout.txt`/`stderr.txt` evidence, and terminal prose is never
+  parsed into structured conclusions.
 - Local image adapter and constrained SSH/SFTP runner.
-  Status: complete at 7B with the injectable `RemoteTransport`, charset-
-  constrained ssh/sftp argument-list transport, absolute remote-executable
-  probing, request/result hash persistence into `remote_job`, and explicit
-  fetch/limit skips. Real-node execution awaits user-provided credentials.
+  Status: complete with the injectable `RemoteTransport`, charset-constrained
+  ssh/sftp argument-list transport, absolute remote-executable probing,
+  request/result hash persistence into `remote_job`, and explicit fetch/
+  limit skips. Live-node execution awaits user-provided credentials.
 - Capability probing, isolation, timeout, output cap, hash verification tests.
-  Status: complete for local runs and for the remote runner under the fake
-  transport; live-node equivalents run during real-node validation.
+  Status: complete for local runs, the adapter, and the remote runner under
+  the fake transport; live-node equivalents run during real-node validation.
 
-## M8 - Packaging and release validation (pending, estimate 4 days)
+## M8 - Packaging and release validation (complete, estimate 4 days)
 
 - Windows launcher/package, licenses, notices, and clean-machine install test.
+  Status: complete except the one-time hands-on clean-machine run: MIT
+  LICENSE, THIRD_PARTY_NOTICES.md, `scripts/auto-shark-gui.cmd`, version
+  0.1.0 Beta, README/user guide, and the scripted clean-machine procedure in
+  `docs/RELEASE_CHECKLIST.md`.
 - Windows TShark 4.6.7 and Linux supported-profile CI.
+  Status: complete; CI installs real TShark on both matrix runners, runs the
+  full suite with `AUTO_SHARK_TSHARK`, and smoke-analyzes the committed
+  synthetic fixture capture.
 - Large/malformed capture resource tests and interruption recovery.
+  Status: complete for malformed/short/empty captures (bounded, rerun-stable,
+  explicit tool-run states) and interrupted `running` body-task recovery on
+  rerun; large-input budgets were already covered at M2.
 - User documentation and v1 release checklist.
+  Status: complete; `docs/USER_GUIDE.md` and `docs/RELEASE_CHECKLIST.md`
+  record verified evidence and the two user-executable residuals (clean
+  machine test, live Linux node).

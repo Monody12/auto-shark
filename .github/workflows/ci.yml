@@ -11,8 +11,10 @@ jobs:
         include:
           - os: ubuntu-latest
             python: "3.9"
+            tshark_path: /usr/bin/tshark
           - os: windows-latest
             python: "3.11"
+            tshark_path: C:\Program Files\Wireshark\tshark.exe
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -20,7 +22,26 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
           enable-cache: true
+      - name: Install TShark (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends tshark
+      - name: Install TShark (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: choco install -y --no-progress wireshark
       - run: uv sync --all-groups
       - run: uv run ruff check .
-      - run: uv run pytest --cov=auto_shark --cov-report=term-missing
-
+      - name: Run tests with real TShark
+        env:
+          AUTO_SHARK_TSHARK: ${{ matrix.tshark_path }}
+        run: uv run pytest --cov=auto_shark --cov-report=term-missing
+      - name: CLI smoke analyze on committed fixture
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          AUTO_SHARK_TSHARK: ${{ matrix.tshark_path }}
+        run: |
+          uv run auto-shark analyze tests/fixtures/http-smoke.pcap \
+            --project "$RUNNER_TEMP/smoke.auto-shark" \
+            --with-bodies --scan
+          uv run auto-shark report "$RUNNER_TEMP/smoke.auto-shark" > /dev/null

@@ -13,13 +13,12 @@ candidate ranking, static file analysis, and constrained optional Linux jobs.
 
 ## Current milestone
 
-M7 - Plugins and Linux enhancement node.
+v1 shipped at 0.1.0. M0 through M8 exit criteria are complete.
 
-Status: active. M0 through M6 exit criteria are complete. The M5 schema 14,
-investigation-state, report, export, and verification contract is recorded in
-`docs/M5_IMPLEMENTATION.md`. The M6 GUI service/threading/view contract is
-recorded in `docs/M6_IMPLEMENTATION.md`; all three checkpoints 6A/6B/6C are
-implemented and verified.
+Status: all milestones complete. Two user-executable residuals remain
+recorded in `docs/RELEASE_CHECKLIST.md`: the one-time hands-on clean-machine
+install test and live Linux-node `remote-probe`/`remote-run` validation
+(needs user-held node credentials). Neither blocks the published v1.
 
 The first M3 slice is active. Its FTP structured metadata, explicit frame
 correlation, bounded TCP reuse, static export, and no-unpack contract is
@@ -660,6 +659,35 @@ Environment paths below are local evidence, not production defaults:
   hash round trips, failure/timeout/missing-result statuses, unsafe-manifest
   rejection, and sftp batch quoting; real Linux-node execution remains
   pending user-provided node credentials and is recorded as residual risk.
+- M7 checkpoint 7C adds the shipped working-directory adapter
+  (`auto_shark/assets/cwd_adapter.py`). It runs any declared tool with the
+  job's isolated output directory as working directory, preserves the tool's
+  terminal output verbatim as hashed `stdout.txt`/`stderr.txt` evidence
+  files, propagates the inner exit code (124 on inner timeout), and never
+  parses terminal prose into structured conclusions. Template manifests and
+  usage live in `plugins/examples/README.md`.
+- Real 7C smoke: the local `ctf-stego-toolkit` ran unmodified through the
+  adapter against the frame-233 JPEG artifact (input SHA-256
+  `d8e9ba607bde8bccb1bf812e7d0d354abf41a57c0461e6b59c1fa9d5dcc58888`),
+  completed with exit 0, and its 3,934-byte terminal report is preserved as
+  hashed evidence. Adapter tests cover argument validation, output
+  collection, and failure/timeout propagation.
+- M8 adds the release gates: a synthetic committed fixture
+  (`tests/fixtures/http-smoke.pcap`, two hand-crafted HTTP frames), seven
+  real-TShark tests (fixture smoke with rerun determinism, four malformed
+  captures with bounded consistent outcomes, empty valid capture, and
+  interrupted `running` body-task recovery on rerun), real-TShark CI on both
+  matrix runners with a CLI analyze/report smoke step, MIT LICENSE,
+  THIRD_PARTY_NOTICES.md, rewritten README, `docs/USER_GUIDE.md`,
+  `docs/RELEASE_CHECKLIST.md`, `scripts/auto-shark-gui.cmd`, and the 0.1.0
+  Beta version bump.
+- Final v1 verification passes Ruff; Windows CPython 3.11.15 reports 208
+  tests at 87 percent total coverage with real TShark 4.6.7; CPython 3.9.25
+  reports 201 passed plus the expected widget skip, also with real TShark.
+  `uv build` produces `auto_shark-0.1.0` containing `plugins.py`,
+  `remote.py`, `assets/cwd_adapter.py`, the GUI package, and all reporting
+  modules. M0 through M8 are complete; the project has reached its v1
+  release goal.
 
 ## Active decisions
 
@@ -711,8 +739,8 @@ Environment paths below are local evidence, not production defaults:
 
 ## Next executable step
 
-Validate `remote-probe`/`remote-run` against the real CentOS node using the
-user-local secure connection configuration, then decide whether 7C
-(`ctf-stego-toolkit` adapter) is unblocked by that toolkit gaining the JSON
-output/output-directory contract. After M7 closes, start M8 packaging and
-release validation from `docs/ROADMAP.md`.
+None for automated development: v1 (0.1.0) is complete and pushed. The two
+remaining acceptance items are user-executable and scripted in
+`docs/RELEASE_CHECKLIST.md`: the one-time clean-machine install/GUI test and
+live Linux-node `remote-probe`/`remote-run` validation with user-held
+credentials.
