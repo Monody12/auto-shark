@@ -114,9 +114,19 @@ all exit criteria are verified and recorded in `PROJECT_STATE.md`.
 ## M7 - Plugins and Linux enhancement node (active, estimate 5 days)
 
 - Plugin manifest and in-process/external adapter limits.
+  Status: complete for external analyzers at 7A under the schema 15 contract
+  in `docs/M7_IMPLEMENTATION.md`: validated `auto-shark.plugin/v1` manifests,
+  placeholder-only argument lists, bounded limits, isolated job directories,
+  and hashed outputs with explicit skips. The remote runner (7B) and the
+  `ctf-stego-toolkit` adapter (7C) remain pending.
 - Stable JSON report/output-dir support for `ctf-stego-toolkit`.
+  Status: pending; blocked on that toolkit independently providing the
+  required JSON output and explicit output-directory interface.
 - Local image adapter and constrained SSH/SFTP runner.
+  Status: local adapter proven by the real frame-233 JPEG smoke; the
+  SSH/SFTP runner is 7B.
 - Capability probing, isolation, timeout, output cap, hash verification tests.
+  Status: complete for local runs; remote equivalents land with 7B.
 
 ## M8 - Packaging and release validation (pending, estimate 4 days)
 

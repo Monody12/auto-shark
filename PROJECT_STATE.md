@@ -611,6 +611,31 @@ Environment paths below are local evidence, not production defaults:
   with TShark 4.6.7. Interactive desktop acceptance remains M8 scope.
 - M6 is complete: the CLI stays PySide6-free on 3.9, and the GUI reuses only
   the bounded, tested read models.
+- M7 checkpoint 7A adds schema 15 (plugin manifest registry plus
+  plugin_run_detail/plugin_output/plugin_output_skip) and the declared
+  external-analyzer runner. `auto-shark.plugin/v1` manifests validate name,
+  version, executable, capabilities, `{input}`/`{output_dir}`-only argument
+  placeholders, and bounded timeout/stdout/stderr/output-file/output-byte
+  limits; `plugin-probe` validates without executing. `plugin-run` verifies
+  the artifact Blob hash before copying it into an isolated
+  `jobs/plugins/<run-id>/input` directory, executes the analyzer through the
+  bounded argument-list runner, and records every output file by path, byte
+  length, and SHA-256 with explicit file/byte/total/result skip reasons.
+  Auto-Shark never executes captured content itself.
+- Final 7A verification passes Ruff; Windows CPython 3.11.15 reports 192
+  tests at 85 percent total coverage (`plugins.py` 90 percent); CPython
+  3.9.25 reports 185 passed plus the expected widget skip. `uv build`
+  succeeds and the wheel contains `plugins.py`.
+- The real smoke registered a `jpeg-report` manifest and ran it against the
+  multipart project's frame-233 JPEG artifact
+  `f387c42364a072c5a0130c81585a9e3654ff4e5fb31c6231b5c413cddecdda14`. The
+  run completed with input SHA-256
+  `d8e9ba607bde8bccb1bf812e7d0d354abf41a57c0461e6b59c1fa9d5dcc58888`
+  (matching the verified M2 carve), one 272-byte hashed `result.json`
+  confirming JPEG magic/EOI, zero skips, and an independent re-read of every
+  produced file matching the recorded hashes. The project database passes
+  integrity and foreign-key checks. Machine-local smoke files live under
+  `%LOCALAPPDATA%\AutoShark\m7-smoke`.
 
 ## Active decisions
 
@@ -662,9 +687,8 @@ Environment paths below are local evidence, not production defaults:
 
 ## Next executable step
 
-Write `docs/M7_IMPLEMENTATION.md` fixing the plugin contract: plugin manifest
-schema, in-process/external adapter limits, the `ctf-stego-toolkit` JSON
-output/output-directory requirement, bounded local image analysis, the
-constrained SSH/SFTP Linux runner, and capability/isolation/timeout/hash
-verification gates. Then implement it in tested checkpoints starting with the
-manifest probe and local adapter.
+Implement M7 checkpoint 7B from `docs/M7_IMPLEMENTATION.md`: the constrained
+SSH/SFTP Linux runner with absolute remote-executable probing, allowlisted
+jobs, request/response hash verification, and `remote_job` persistence.
+7C (the `ctf-stego-toolkit` adapter) stays blocked on that toolkit
+independently providing the JSON output/output-directory contract.

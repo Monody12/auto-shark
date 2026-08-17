@@ -237,3 +237,54 @@ def test_schema_thirteen_database_migrates_to_investigation_notes(tmp_path) -> N
         }
         assert {"note_id", "capture_id", "legacy_note_id"}.issubset(columns)
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+def test_schema_fourteen_database_migrates_to_plugin_tables(tmp_path) -> None:
+    database = Database(tmp_path / "project.sqlite")
+    database.initialize()
+    with database.connect() as connection:
+        for table in (
+            "plugin_manifest",
+            "plugin_run_detail",
+            "plugin_output",
+            "plugin_output_skip",
+        ):
+            connection.execute(f"DROP TABLE {table}")
+        connection.execute("PRAGMA user_version = 14")
+    database.initialize()
+    tables = set(database.table_names())
+    assert {
+        "plugin_manifest",
+        "plugin_run_detail",
+        "plugin_output",
+        "plugin_output_skip",
+    }.issubset(tables)
+    with database.connect() as connection:
+        run_row = connection.execute(
+            "INSERT INTO plugin_run"
+            "(run_id,plugin_id,plugin_version,input_artifact_id,job_directory,status,"
+            "result_schema,started_at,ended_at) "
+            "VALUES('run-1','manifest-1','1.0',NULL,'jobs/plugins/run-1','completed',"
+            "'auto-shark.plugin-run/v1','2026-08-17T00:00:00+00:00',NULL)"
+        ).fetchone()
+        assert run_row is None
+        run_id = int(
+            connection.execute("SELECT id FROM plugin_run WHERE run_id='run-1'").fetchone()[0]
+        )
+        connection.execute(
+            "INSERT INTO plugin_output(plugin_run_id,relative_path,byte_length,sha256) "
+            "VALUES(?, 'result.json', 2, 'hash')",
+            (run_id,),
+        )
+        connection.execute(
+            "INSERT INTO plugin_output_skip(plugin_run_id,relative_path,reason) "
+            "VALUES(?, 'big.bin', 'file-byte-limit')",
+            (run_id,),
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO plugin_output_skip(plugin_run_id,relative_path,reason) "
+                "VALUES(?, 'x', 'not-a-reason')",
+                (run_id,),
+            )
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []

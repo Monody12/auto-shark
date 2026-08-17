@@ -1063,4 +1063,62 @@ MIGRATIONS = (
     CREATE INDEX IF NOT EXISTS idx_investigation_note_subject
         ON investigation_note(capture_id, subject_kind, subject_id);
     """,
+    """
+    CREATE TABLE IF NOT EXISTS plugin_manifest (
+        id INTEGER PRIMARY KEY,
+        manifest_id TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        version TEXT NOT NULL,
+        schema_version TEXT NOT NULL,
+        manifest_path TEXT NOT NULL,
+        executable TEXT NOT NULL,
+        capabilities_json TEXT NOT NULL,
+        arguments_json TEXT NOT NULL,
+        limits_json TEXT NOT NULL,
+        registered_at TEXT NOT NULL,
+        UNIQUE (name, version)
+    );
+
+    CREATE TABLE IF NOT EXISTS plugin_run_detail (
+        plugin_run_id INTEGER NOT NULL PRIMARY KEY REFERENCES plugin_run(id)
+            ON DELETE CASCADE,
+        exit_code INTEGER,
+        stdout_bytes INTEGER CHECK (stdout_bytes IS NULL OR stdout_bytes >= 0),
+        stdout_sha256 TEXT,
+        stdout_truncated INTEGER NOT NULL CHECK (stdout_truncated IN (0, 1)),
+        stderr_bytes INTEGER CHECK (stderr_bytes IS NULL OR stderr_bytes >= 0),
+        stderr_sha256 TEXT,
+        stderr_truncated INTEGER NOT NULL CHECK (stderr_truncated IN (0, 1)),
+        argv_json TEXT NOT NULL,
+        result_json TEXT,
+        error TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS plugin_output (
+        id INTEGER PRIMARY KEY,
+        plugin_run_id INTEGER NOT NULL REFERENCES plugin_run(id) ON DELETE CASCADE,
+        relative_path TEXT NOT NULL,
+        byte_length INTEGER NOT NULL CHECK (byte_length >= 0),
+        sha256 TEXT NOT NULL,
+        UNIQUE (plugin_run_id, relative_path)
+    );
+
+    CREATE TABLE IF NOT EXISTS plugin_output_skip (
+        id INTEGER PRIMARY KEY,
+        plugin_run_id INTEGER NOT NULL REFERENCES plugin_run(id) ON DELETE CASCADE,
+        relative_path TEXT,
+        reason TEXT NOT NULL CHECK (
+            reason IN (
+                'file-limit', 'file-byte-limit', 'total-byte-limit', 'unreadable',
+                'result-too-large', 'result-invalid-json'
+            )
+        ),
+        UNIQUE (plugin_run_id, relative_path, reason)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_plugin_run_artifact
+        ON plugin_run(input_artifact_id, started_at);
+    CREATE INDEX IF NOT EXISTS idx_plugin_output_run
+        ON plugin_output(plugin_run_id, relative_path);
+    """,
 )

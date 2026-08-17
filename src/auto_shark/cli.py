@@ -23,6 +23,7 @@ from .investigation import add_note, query_notes, set_review_mark, update_note
 from .m4_queries import query_findings, query_timeline
 from .manual_queue import rebuild_manual_queue, update_manual_task_state
 from .pipeline import scan_project
+from .plugins import probe_plugin, run_plugin
 from .project import create_project, inspect_project
 from .queries import (
     query_manual_queue,
@@ -319,6 +320,18 @@ def _parser() -> argparse.ArgumentParser:
     gui = commands.add_parser("gui", help="launch the investigation UI (optional gui extra)")
     gui.add_argument("--project", type=Path, help="open this project directory at startup")
 
+    plugin_probe = commands.add_parser(
+        "plugin-probe", help="validate one external analyzer manifest"
+    )
+    plugin_probe.add_argument("manifest", type=Path)
+
+    plugin_run = commands.add_parser(
+        "plugin-run", help="run one declared analyzer on one artifact"
+    )
+    plugin_run.add_argument("project", type=Path)
+    plugin_run.add_argument("manifest", type=Path)
+    plugin_run.add_argument("--artifact", required=True)
+
     probe = commands.add_parser("probe", help="probe TShark capabilities")
     probe.add_argument("--tshark", type=Path, help="explicit path to tshark executable")
     probe.add_argument("--json", action="store_true", help="emit the complete JSON profile")
@@ -354,6 +367,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         parser.print_help()
         return 0
     try:
+        if args.command == "plugin-probe":
+            probe = probe_plugin(args.manifest)
+            print(json.dumps(probe, ensure_ascii=False, sort_keys=True, indent=2))
+            return 0 if probe["available"] else 2
+        if args.command == "plugin-run":
+            print(
+                json.dumps(
+                    run_plugin(args.project, args.manifest, args.artifact),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    indent=2,
+                )
+            )
+            return 0
         if args.command == "gui":
             from .gui import run_gui
 
