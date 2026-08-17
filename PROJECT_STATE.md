@@ -688,6 +688,14 @@ Environment paths below are local evidence, not production defaults:
   `remote.py`, `assets/cwd_adapter.py`, the GUI package, and all reporting
   modules. M0 through M8 are complete; the project has reached its v1
   release goal.
+- Post-release CI hardening: real-TShark CI on GitHub Actions is green on
+  both matrix jobs (Windows Python 3.11 with the choco Wireshark client plus
+  the analyze/report CLI smoke, and Ubuntu Python 3.9 with the apt client)
+  for run 31999186756. The first Ubuntu failure was a genuine cross-platform
+  bug — `sftp_batch_text` used `Path.as_posix()`, which leaves backslashes in
+  local Windows paths untouched on POSIX hosts — fixed by pure string
+  replacement in `remote.py`; CI now also surfaces failing pytest lines as
+  step annotations with fail-fast disabled.
 
 ## Active decisions
 
