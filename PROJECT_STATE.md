@@ -688,6 +688,16 @@ Environment paths below are local evidence, not production defaults:
   `remote.py`, `assets/cwd_adapter.py`, the GUI package, and all reporting
   modules. M0 through M8 are complete; the project has reached its v1
   release goal.
+- v0.1.0 is published at https://github.com/Monody12/auto-shark/releases/tag/v0.1.0
+  with four assets: the out-of-the-box Windows bundle
+  `AutoShark-0.1.0-Windows-x64.zip` (49,250,930 bytes, SHA-256
+  `317d27c46d3c99e8ab1290e87f78b57b69d74fcbf7bb374463b1848500bad853`;
+  PyInstaller onedir from the committed `scripts/autoshark.spec` with
+  embedded Python 3.11 + PySide6, `AutoShark.exe` GUI and `auto-shark.exe`
+  CLI, LICENSE/notices/install README), the wheel, the sdist, and
+  SHA256SUMS. Packaged executables were smoke-tested locally end to end
+  (probe, analyze, report, export, GUI startup). TShark stays a separate
+  GPL install that the bundle auto-detects.
 - Post-release CI hardening: real-TShark CI on GitHub Actions is green on
   both matrix jobs (Windows Python 3.11 with the choco Wireshark client plus
   the analyze/report CLI smoke, and Ubuntu Python 3.9 with the apt client)
