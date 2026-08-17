@@ -40,6 +40,14 @@ Status legend: [x] verified with recorded evidence, [ ] pending execution.
 - [x] Example plugin manifests documented in `plugins/examples/README.md`.
 - [x] `scripts/auto-shark-gui.cmd` launcher for Windows desktops.
 - [x] Version 0.1.0 with Beta classifier.
+- [x] Out-of-the-box Windows bundle: PyInstaller onedir (shared spec
+      `scripts/autoshark.spec`, launchers in `scripts/launcher_*.py`) with
+      embedded Python 3.11 and PySide6, `AutoShark.exe` (GUI) and
+      `auto-shark.exe` (CLI), zipped with LICENSE/notices/install README.
+      Packaged-executable smoke passed locally: probe, full analyze, report,
+      export, and GUI startup.
+- [x] GitHub Release v0.1.0 with the bundle zip, wheel, sdist, and
+      SHA256SUMS as assets.
 
 ## Clean-machine install test (run once before announcing)
 
