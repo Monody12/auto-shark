@@ -164,7 +164,11 @@ class SshTransport(RemoteTransport):
                 _checked_remote_path(source)
             if operation == "put":
                 _checked_remote_path(target)
-            lines.append(f'{operation} "{Path(source).as_posix()}" "{target}"')
+            # Pure string replacement: on POSIX hosts a backslash inside a
+            # local Windows path is not a separator, so Path.as_posix() would
+            # leave it untouched and break the batch line.
+            source_posix = str(source).replace("\\", "/")
+            lines.append(f'{operation} "{source_posix}" "{target}"')
         return "\n".join(lines) + "\n"
 
     def _transfer(self, operations: Sequence[tuple[str, str, str]], batch_path: Path) -> None:
