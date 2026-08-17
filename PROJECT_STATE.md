@@ -1,6 +1,6 @@
 # Auto-Shark Project State
 
-Updated: 2026-08-15, Asia/Shanghai
+Updated: 2026-08-17, Asia/Shanghai
 
 This is the canonical resume checkpoint. Update it after every tested slice.
 
@@ -13,14 +13,12 @@ candidate ranking, static file analysis, and constrained optional Linux jobs.
 
 ## Current milestone
 
-M5 - Investigation state and reports.
+M6 - PySide6 investigation UI.
 
-Status: active. M0, M1, M2, M3, and M4 exit criteria are complete.
-
-The M4 schema 13, bounded detector, static-analysis, CLI, public-sample, and
-verification contract is recorded in `docs/M4_IMPLEMENTATION.md`. Implementation
-is authorized in three checkpoints: 4A unknown candidates, 4B SQL-injection
-behavior, then 4C WebShell timeline and bounded queries.
+Status: active. M0 through M5 exit criteria are complete. The M5 schema 14,
+investigation-state, report, export, and verification contract is recorded in
+`docs/M5_IMPLEMENTATION.md`; all three checkpoints 5A/5B/5C are implemented
+and verified.
 
 The first M3 slice is active. Its FTP structured metadata, explicit frame
 correlation, bounded TCP reuse, static export, and no-unpack contract is
@@ -534,6 +532,55 @@ Environment paths below are local evidence, not production defaults:
   in the historical WebShell runtime Blob store are a machine-local residual
   risk recorded in `PROJECT_HANDOFF.local.md`; neither is required by the
   stable 19-event/eight-group detector result.
+- M5 checkpoint 5A is implemented under `docs/M5_IMPLEMENTATION.md`. Schema 14
+  adds capture-scoped `investigation_note` rows while preserving legacy notes;
+  first access assigns deterministic public IDs without deleting old rows.
+  Human review marks validate current-capture candidates, findings, artifacts,
+  behavior events, manual tasks, or evidence before upsert. Note create/update
+  and bounded query commands enforce UTF-8 byte limits and stable pagination.
+- Focused 5A Ruff validation passes. The schema migration, investigation API,
+  CLI, and manual-queue preservation group reports 28 tests passed. Coverage
+  includes legacy note migration, invalid/cross-project subjects, mark upsert,
+  note update/filter/truncation, UTF-8 limits, and CLI limit forwarding.
+- M5 checkpoint 5B adds the bounded `auto-shark.report/v1` read model and
+  `report` CLI. It combines public capture identity, coverage, protocols,
+  conversations, candidates, findings, WebShell events, artifacts, queue
+  tasks, human marks/notes, evidence locators, and sanitized tool provenance.
+  Reports exclude absolute project/capture paths, SQLite keys, command lines,
+  stderr, Blob paths, and inline Blob/text bytes. Every collection has its own
+  count/limit/truncation fields; detail and note UTF-8 budgets are independent.
+- Focused 5B Ruff validation passes and the reporting/5A/database/CLI group
+  reports 31 tests passed. Real `m3-telnet-dialogue-clean.auto-shark` reports
+  39,874 bytes with SHA-256
+  `df12d35abfd5520883da7ecd4922adb433f58b1e38755183e56c60d20cbf4db7` and
+  repeated in-memory output is identical. Real `m2-caidao-workflow.auto-shark`
+  reports 198,231 bytes with SHA-256
+  `1e9f34f9fcfa613f0c6e17c2dfe876dd1ecaf595ef2eb3e6b7eec3ac80404dd8` and is
+  likewise stable (8 deduplicated events, 1 finding, 2 artifacts).
+- M5 checkpoint 5C adds the staged offline bundle exporter: a script-free
+  self-contained HTML shell with escaped embedded report JSON, atomic
+  publication into a new or empty destination, `report.json`/`report.html`/
+  `manifest.json` with byte lengths and SHA-256 hashes, and optional bounded
+  evidence ranges copied from validated Blob paths under independent item,
+  per-item, and total byte limits with explicit `blob-missing`,
+  `blob-incomplete`, `blob-path-escapes-project`, `range-out-of-bounds`, and
+  budget skip reasons. Exported evidence is inert; nothing is rendered,
+  unpacked, decrypted, or executed.
+- Final M5 verification passes Ruff; Windows CPython 3.11.15 reports 170 tests
+  at 87 percent total coverage; CPython 3.9.25 passes the same 170 tests.
+  `uv build` succeeds and the wheel contains `investigation.py`,
+  `reporting.py`, and `exporting.py`.
+- All five acceptance projects passed the real report/export gate. Repeated
+  `report` output is byte-identical and two fresh-directory exports are
+  byte-identical per project: Telnet 41,051-byte report/31 evidence items/710
+  bytes; HTTP-form 76,036/9/7,709 with one explicit `blob-incomplete` skip;
+  FTP 105,950/2/328; multipart 60,107/7/329,138; WebShell 203,849/190/874,687
+  with four explicit `blob-missing` skips from its recorded historical Blob
+  loss. No report contains an absolute path, `.sqlite` reference, or Blob
+  path. All five databases report `integrity_check=ok`, zero foreign-key
+  violations, and empty `jobs` directories.
+- M5 is complete: investigation state, deterministic JSON reporting, offline
+  HTML/evidence export, and reopen/export determinism are all evidenced.
 
 ## Active decisions
 
@@ -585,6 +632,8 @@ Environment paths below are local evidence, not production defaults:
 
 ## Next executable step
 
-Write the M5 implementation contract, then implement review state and notes,
-stable report JSON, self-contained offline HTML plus evidence-directory export,
-and reopen/export determinism in that order.
+Write `docs/M6_IMPLEMENTATION.md` fixing the PySide6 GUI contract: reusable
+read-model services over the existing bounded query/report surfaces, the
+`gui` entry point and optional dependency group, project open/create flow with
+progress/cancellation, and the view list with empty/partial/failed states.
+Implement it in tested checkpoints starting with the application shell.

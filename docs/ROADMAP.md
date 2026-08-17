@@ -73,14 +73,24 @@ all exit criteria are verified and recorded in `PROJECT_STATE.md`.
   `docs/M4_IMPLEMENTATION.md`, including public SQL-sample provenance and the
   exact 19-event/eight-group WebShell acceptance result.
 
-## M5 - Investigation state and reports (active, estimate 3 days)
+## M5 - Investigation state and reports (complete, estimate 3 days)
 
 - Review states and notes.
+  Status: complete with schema 14 capture-scoped notes, legacy preservation,
+  current-subject validation, bounded queries, and explicit CLI mutations.
 - Stable machine-readable JSON schema.
+  Status: complete with bounded `auto-shark.report/v1` JSON, independent
+  collection budgets, path/Blob-byte redaction, and deterministic ordering.
 - Self-contained offline HTML and evidence directory export.
+  Status: complete with staged atomic publication, new/empty destination
+  enforcement, hash manifest, exact bounded evidence ranges, explicit
+  missing/incomplete/over-budget skips, and an offline script-free HTML shell.
 - Reopen/export determinism and provenance validation.
+  Status: complete; repeated reports and two fresh-directory exports are
+  byte-identical across all five acceptance projects with integrity,
+  foreign-key, and empty-jobs checks recorded in `PROJECT_STATE.md`.
 
-## M6 - PySide6 investigation UI (pending, estimate 6 days)
+## M6 - PySide6 investigation UI (active, estimate 6 days)
 
 - Project creation/opening and analysis progress/cancellation.
 - Overview, paired HTTP, streams/messages, search, findings, files, lineage.

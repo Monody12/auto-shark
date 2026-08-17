@@ -2,10 +2,13 @@ import json
 
 from auto_shark import cli
 from auto_shark.detectors import ProjectDetectionSummary
+from auto_shark.exporting import ExportLimits, ExportSummary
 from auto_shark.ftp import FtpIndexSummary
 from auto_shark.inventory import InventorySummary
+from auto_shark.investigation import NotesPage
 from auto_shark.m4_queries import FindingsPage, TimelinePage
 from auto_shark.queries import TelnetQueryPage
+from auto_shark.reporting import ReportDocument, ReportLimits
 from auto_shark.telnet import TelnetIndexSummary
 from auto_shark.triage import TriageSummary
 
@@ -75,6 +78,202 @@ def test_triage_cli_reports_invalid_limits(capsys, tmp_path) -> None:
     result = cli.main(["triage", str(tmp_path), "--max-total-bytes", "0"])
     assert result == 2
     assert "triage limits must be positive" in capsys.readouterr().err
+
+
+def test_investigation_cli_commands_forward_values(monkeypatch, capsys, tmp_path) -> None:
+    calls = []
+    project = tmp_path / "sample.auto-shark"
+
+    def fake_review(value, subject_kind, subject_id, state):
+        calls.append(("review", value, subject_kind, subject_id, state))
+        return {"schema_version": "auto-shark.review-mark/v1"}
+
+    def fake_add(value, subject_kind, subject_id, body, **limits):
+        calls.append(("add", value, subject_kind, subject_id, body, limits))
+        return {"schema_version": "auto-shark.note/v1"}
+
+    def fake_update(value, note_id, body, **limits):
+        calls.append(("update", value, note_id, body, limits))
+        return {"schema_version": "auto-shark.note/v1"}
+
+    def fake_query(value, **limits):
+        calls.append(("query", value, limits))
+        return NotesPage(
+            "auto-shark.notes/v1",
+            limits["offset"],
+            limits["limit"],
+            0,
+            0,
+            limits["max_body_bytes"],
+            limits["subject_kind"],
+            limits["subject_id"],
+            (),
+        )
+
+    monkeypatch.setattr(cli, "set_review_mark", fake_review)
+    monkeypatch.setattr(cli, "add_note", fake_add)
+    monkeypatch.setattr(cli, "update_note", fake_update)
+    monkeypatch.setattr(cli, "query_notes", fake_query)
+
+    assert cli.main(
+        ["review-mark", str(project), "candidate", "candidate-1", "--state", "key_evidence"]
+    ) == 0
+    assert cli.main(
+        [
+            "note-add",
+            str(project),
+            "candidate",
+            "candidate-1",
+            "--body",
+            "first",
+            "--max-note-bytes",
+            "7",
+        ]
+    ) == 0
+    assert cli.main(
+        ["note-update", str(project), "note-1", "--body", "second", "--max-note-bytes", "11"]
+    ) == 0
+    assert cli.main(
+        [
+            "notes",
+            str(project),
+            "--subject-kind",
+            "candidate",
+            "--subject-id",
+            "candidate-1",
+            "--offset",
+            "1",
+            "--limit",
+            "2",
+            "--max-body-bytes",
+            "13",
+        ]
+    ) == 0
+
+    assert calls == [
+        ("review", project, "candidate", "candidate-1", "key_evidence"),
+        ("add", project, "candidate", "candidate-1", "first", {"max_note_bytes": 7}),
+        ("update", project, "note-1", "second", {"max_note_bytes": 11}),
+        (
+            "query",
+            project,
+            {
+                "subject_kind": "candidate",
+                "subject_id": "candidate-1",
+                "offset": 1,
+                "limit": 2,
+                "max_body_bytes": 13,
+            },
+        ),
+    ]
+    assert capsys.readouterr().out.count('"schema_version"') == 4
+
+
+def test_report_cli_forwards_independent_limits(monkeypatch, capsys, tmp_path) -> None:
+    received = {}
+    project = tmp_path / "sample.auto-shark"
+
+    def fake_report(value, *, limits):
+        received["project"] = value
+        received["limits"] = limits
+        return ReportDocument({"schema_version": "auto-shark.report/v1"})
+
+    monkeypatch.setattr(cli, "collect_report", fake_report)
+    values = tuple(range(1, 17))
+    result = cli.main(
+        [
+            "report",
+            str(project),
+            "--max-protocols",
+            "1",
+            "--max-conversations",
+            "2",
+            "--max-candidates",
+            "3",
+            "--max-findings",
+            "4",
+            "--max-events",
+            "5",
+            "--max-artifacts",
+            "6",
+            "--max-manual-tasks",
+            "7",
+            "--max-review-marks",
+            "8",
+            "--max-notes",
+            "9",
+            "--max-evidence",
+            "10",
+            "--max-tool-runs",
+            "11",
+            "--max-detector-runs",
+            "12",
+            "--max-signals",
+            "13",
+            "--max-evidence-links",
+            "14",
+            "--max-detail-bytes",
+            "15",
+            "--max-note-bytes",
+            "16",
+        ]
+    )
+
+    assert result == 0
+    assert received == {
+        "project": project,
+        "limits": ReportLimits(*values),
+    }
+    assert json.loads(capsys.readouterr().out)["schema_version"] == "auto-shark.report/v1"
+
+
+def test_export_cli_forwards_report_and_evidence_limits(monkeypatch, capsys, tmp_path) -> None:
+    received = {}
+    project = tmp_path / "sample.auto-shark"
+    destination = tmp_path / "out"
+
+    def fake_export(value, output, *, report_limits, export_limits):
+        received.update(
+            {
+                "project": value,
+                "output": output,
+                "report_limits": report_limits,
+                "export_limits": export_limits,
+            }
+        )
+        return ExportSummary("auto-shark.export/v1", str(output), "r", "h", 0, 0, 0, ())
+
+    monkeypatch.setattr(cli, "export_bundle", fake_export)
+    assert cli.main(
+        [
+            "export",
+            str(project),
+            str(destination),
+            "--no-evidence",
+            "--max-evidence-items",
+            "7",
+            "--max-evidence-item-bytes",
+            "11",
+            "--max-evidence-total-bytes",
+            "13",
+            "--max-events",
+            "17",
+            "--max-detail-bytes",
+            "19",
+        ]
+    ) == 0
+    assert received == {
+        "project": project,
+        "output": destination,
+        "report_limits": ReportLimits(events=17, detail_bytes=19),
+        "export_limits": ExportLimits(
+            include_evidence=False,
+            max_evidence_items=7,
+            max_evidence_item_bytes=11,
+            max_evidence_total_bytes=13,
+        ),
+    }
+    assert json.loads(capsys.readouterr().out)["schema_version"] == "auto-shark.export/v1"
 
 
 def test_detect_cli_forwards_unknown_candidate_limits(monkeypatch, capsys, tmp_path) -> None:

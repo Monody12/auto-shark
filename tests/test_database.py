@@ -221,3 +221,19 @@ def test_schema_twelve_database_migrates_to_m4_detector_schema(tmp_path) -> None
     }.issubset(set(database.table_names()))
     with database.connect() as connection:
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+def test_schema_thirteen_database_migrates_to_investigation_notes(tmp_path) -> None:
+    database = Database(tmp_path / "project.sqlite")
+    database.initialize()
+    with database.connect() as connection:
+        connection.execute("DROP TABLE investigation_note")
+        connection.execute("PRAGMA user_version = 13")
+    database.initialize()
+    assert "investigation_note" in set(database.table_names())
+    with database.connect() as connection:
+        columns = {
+            str(row[1]) for row in connection.execute("PRAGMA table_info(investigation_note)")
+        }
+        assert {"note_id", "capture_id", "legacy_note_id"}.issubset(columns)
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []

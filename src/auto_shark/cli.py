@@ -15,9 +15,11 @@ from .body import extract_http_body
 from .config import Settings
 from .detectors import detect_project
 from .engines.tshark import find_tshark, probe_tshark
+from .exporting import ExportLimits, export_bundle
 from .files.carve import carve_project
 from .ftp import index_ftp
 from .inventory import index_summary
+from .investigation import add_note, query_notes, set_review_mark, update_note
 from .m4_queries import query_findings, query_timeline
 from .manual_queue import rebuild_manual_queue, update_manual_task_state
 from .pipeline import scan_project
@@ -29,11 +31,52 @@ from .queries import (
     query_telnet_dialogues,
     query_transactions,
 )
+from .reporting import ReportLimits, collect_report
 from .tcp import reconstruct_tcp_stream
 from .telnet import index_telnet
 from .triage import triage_project
 from .version import __version__
 from .workflow import analyze_with_bodies
+
+
+def _add_report_limits(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--max-protocols", type=int, default=256)
+    parser.add_argument("--max-conversations", type=int, default=1000)
+    parser.add_argument("--max-candidates", type=int, default=1000)
+    parser.add_argument("--max-findings", type=int, default=1000)
+    parser.add_argument("--max-events", type=int, default=1000)
+    parser.add_argument("--max-artifacts", type=int, default=1000)
+    parser.add_argument("--max-manual-tasks", type=int, default=1000)
+    parser.add_argument("--max-review-marks", type=int, default=1000)
+    parser.add_argument("--max-notes", type=int, default=1000)
+    parser.add_argument("--max-evidence", type=int, default=10_000)
+    parser.add_argument("--max-tool-runs", type=int, default=1000)
+    parser.add_argument("--max-detector-runs", type=int, default=1000)
+    parser.add_argument("--max-signals", type=int, default=10_000)
+    parser.add_argument("--max-evidence-links", type=int, default=50_000)
+    parser.add_argument("--max-detail-bytes", type=int, default=4096)
+    parser.add_argument("--max-note-bytes", type=int, default=64 * 1024)
+
+
+def _report_limits(args: argparse.Namespace) -> ReportLimits:
+    return ReportLimits(
+        protocols=args.max_protocols,
+        conversations=args.max_conversations,
+        candidates=args.max_candidates,
+        findings=args.max_findings,
+        events=args.max_events,
+        artifacts=args.max_artifacts,
+        manual_tasks=args.max_manual_tasks,
+        review_marks=args.max_review_marks,
+        notes=args.max_notes,
+        evidence=args.max_evidence,
+        tool_runs=args.max_tool_runs,
+        detector_runs=args.max_detector_runs,
+        signals=args.max_signals,
+        evidence_links=args.max_evidence_links,
+        detail_bytes=args.max_detail_bytes,
+        note_bytes=args.max_note_bytes,
+    )
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -229,6 +272,50 @@ def _parser() -> argparse.ArgumentParser:
         choices=("open", "in-progress", "resolved", "dismissed"),
     )
 
+    review = commands.add_parser("review-mark", help="set one human investigation mark")
+    review.add_argument("project", type=Path)
+    review.add_argument("subject_kind")
+    review.add_argument("subject_id")
+    review.add_argument(
+        "--state",
+        required=True,
+        choices=("unreviewed", "needs_review", "excluded", "key_evidence"),
+    )
+
+    note_add = commands.add_parser("note-add", help="add a bounded investigation note")
+    note_add.add_argument("project", type=Path)
+    note_add.add_argument("subject_kind")
+    note_add.add_argument("subject_id")
+    note_add.add_argument("--body", required=True)
+    note_add.add_argument("--max-note-bytes", type=int, default=64 * 1024)
+
+    note_update = commands.add_parser("note-update", help="update one investigation note")
+    note_update.add_argument("project", type=Path)
+    note_update.add_argument("note_id")
+    note_update.add_argument("--body", required=True)
+    note_update.add_argument("--max-note-bytes", type=int, default=64 * 1024)
+
+    notes = commands.add_parser("notes", help="query bounded investigation notes")
+    notes.add_argument("project", type=Path)
+    notes.add_argument("--subject-kind")
+    notes.add_argument("--subject-id")
+    notes.add_argument("--offset", type=int, default=0)
+    notes.add_argument("--limit", type=int, default=100)
+    notes.add_argument("--max-body-bytes", type=int, default=64 * 1024)
+
+    report = commands.add_parser("report", help="emit a deterministic bounded report")
+    report.add_argument("project", type=Path)
+    _add_report_limits(report)
+
+    export = commands.add_parser("export", help="write an offline report bundle")
+    export.add_argument("project", type=Path)
+    export.add_argument("output_directory", type=Path)
+    export.add_argument("--no-evidence", action="store_true")
+    export.add_argument("--max-evidence-items", type=int, default=1000)
+    export.add_argument("--max-evidence-item-bytes", type=int, default=16 * 1024 * 1024)
+    export.add_argument("--max-evidence-total-bytes", type=int, default=64 * 1024 * 1024)
+    _add_report_limits(export)
+
     probe = commands.add_parser("probe", help="probe TShark capabilities")
     probe.add_argument("--tshark", type=Path, help="explicit path to tshark executable")
     probe.add_argument("--json", action="store_true", help="emit the complete JSON profile")
@@ -264,6 +351,80 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         parser.print_help()
         return 0
     try:
+        if args.command == "report":
+            print(collect_report(args.project, limits=_report_limits(args)).to_json(), end="")
+            return 0
+        if args.command == "export":
+            print(
+                export_bundle(
+                    args.project,
+                    args.output_directory,
+                    report_limits=_report_limits(args),
+                    export_limits=ExportLimits(
+                        include_evidence=not args.no_evidence,
+                        max_evidence_items=args.max_evidence_items,
+                        max_evidence_item_bytes=args.max_evidence_item_bytes,
+                        max_evidence_total_bytes=args.max_evidence_total_bytes,
+                    ),
+                ).to_json(),
+                end="",
+            )
+            return 0
+        if args.command == "review-mark":
+            print(
+                json.dumps(
+                    set_review_mark(
+                        args.project, args.subject_kind, args.subject_id, args.state
+                    ),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    indent=2,
+                )
+            )
+            return 0
+        if args.command == "note-add":
+            print(
+                json.dumps(
+                    add_note(
+                        args.project,
+                        args.subject_kind,
+                        args.subject_id,
+                        args.body,
+                        max_note_bytes=args.max_note_bytes,
+                    ),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    indent=2,
+                )
+            )
+            return 0
+        if args.command == "note-update":
+            print(
+                json.dumps(
+                    update_note(
+                        args.project,
+                        args.note_id,
+                        args.body,
+                        max_note_bytes=args.max_note_bytes,
+                    ),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    indent=2,
+                )
+            )
+            return 0
+        if args.command == "notes":
+            print(
+                query_notes(
+                    args.project,
+                    subject_kind=args.subject_kind,
+                    subject_id=args.subject_id,
+                    offset=args.offset,
+                    limit=args.limit,
+                    max_body_bytes=args.max_body_bytes,
+                ).to_json()
+            )
+            return 0
         if args.command == "manual-task":
             print(
                 json.dumps(

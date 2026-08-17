@@ -1046,4 +1046,21 @@ MIGRATIONS = (
         ON behavior_event(capture_id, event_kind, request_frame);
     CREATE INDEX IF NOT EXISTS idx_behavior_event_duplicate ON behavior_event(duplicate_of);
     """,
+    """
+    CREATE TABLE IF NOT EXISTS investigation_note (
+        id INTEGER PRIMARY KEY,
+        note_id TEXT NOT NULL UNIQUE,
+        capture_id INTEGER NOT NULL REFERENCES capture(id) ON DELETE CASCADE,
+        subject_kind TEXT NOT NULL,
+        subject_id TEXT NOT NULL,
+        body TEXT NOT NULL,
+        legacy_note_id INTEGER UNIQUE REFERENCES note(id) ON DELETE SET NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_investigation_note_capture
+        ON investigation_note(capture_id, created_at, note_id);
+    CREATE INDEX IF NOT EXISTS idx_investigation_note_subject
+        ON investigation_note(capture_id, subject_kind, subject_id);
+    """,
 )
