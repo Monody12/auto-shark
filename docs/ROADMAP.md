@@ -123,10 +123,13 @@ all exit criteria are verified and recorded in `PROJECT_STATE.md`.
   Status: pending; blocked on that toolkit independently providing the
   required JSON output and explicit output-directory interface.
 - Local image adapter and constrained SSH/SFTP runner.
-  Status: local adapter proven by the real frame-233 JPEG smoke; the
-  SSH/SFTP runner is 7B.
+  Status: complete at 7B with the injectable `RemoteTransport`, charset-
+  constrained ssh/sftp argument-list transport, absolute remote-executable
+  probing, request/result hash persistence into `remote_job`, and explicit
+  fetch/limit skips. Real-node execution awaits user-provided credentials.
 - Capability probing, isolation, timeout, output cap, hash verification tests.
-  Status: complete for local runs; remote equivalents land with 7B.
+  Status: complete for local runs and for the remote runner under the fake
+  transport; live-node equivalents run during real-node validation.
 
 ## M8 - Packaging and release validation (pending, estimate 4 days)
 

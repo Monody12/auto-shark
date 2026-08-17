@@ -50,6 +50,7 @@ class PluginManifest:
     name: str
     version: str
     executable: Path
+    executable_text: str
     capabilities: tuple[str, ...]
     arguments: tuple[str, ...]
     timeout_seconds: int
@@ -185,6 +186,7 @@ def load_plugin_manifest(manifest_path: Path) -> PluginManifest:
         name=name.strip(),
         version=version.strip(),
         executable=Path(executable),
+        executable_text=executable,
         capabilities=tuple(item.strip() for item in capabilities),
         arguments=tuple(arguments),
         timeout_seconds=timeout,
@@ -220,17 +222,8 @@ def _safe_input_name(artifact_id: str, suggested: Optional[str]) -> str:
     return re.sub(r"[^A-Za-z0-9._-]", "_", artifact_id) + ".bin"
 
 
-def _hash_bytes(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
-
-
-def run_plugin(project_path: Path, manifest_path: Path, artifact_id: str) -> dict:
-    manifest = load_plugin_manifest(manifest_path)
-    if not manifest.executable.is_file():
-        raise FileNotFoundError(f"plugin executable not found: {manifest.executable}")
-    project = inspect_project(project_path)
-    database = Database(project.root / "project.sqlite")
-    database.initialize()
+def verified_artifact(project, database: Database, artifact_id: str):
+    """Return (artifact row, blob path, sha256, byte length) after hash checks."""
     with database.connect() as connection:
         artifact = connection.execute(
             "SELECT a.id,a.artifact_id,a.suggested_name,a.blob_id,b.sha256,"
@@ -252,6 +245,23 @@ def run_plugin(project_path: Path, manifest_path: Path, artifact_id: str) -> dic
     blob_sha256, blob_bytes = hash_file(blob_path)
     if blob_sha256 != str(artifact["sha256"]) or blob_bytes != int(artifact["byte_length"]):
         raise ValueError("artifact blob failed hash or length verification")
+    return artifact, blob_path, blob_sha256, blob_bytes
+
+
+def _hash_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def run_plugin(project_path: Path, manifest_path: Path, artifact_id: str) -> dict:
+    manifest = load_plugin_manifest(manifest_path)
+    if not manifest.executable.is_file():
+        raise FileNotFoundError(f"plugin executable not found: {manifest.executable}")
+    project = inspect_project(project_path)
+    database = Database(project.root / "project.sqlite")
+    database.initialize()
+    artifact, blob_path, blob_sha256, blob_bytes = verified_artifact(
+        project, database, artifact_id
+    )
 
     started_at = _now()
     run_id = stable_id(

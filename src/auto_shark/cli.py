@@ -32,6 +32,13 @@ from .queries import (
     query_telnet_dialogues,
     query_transactions,
 )
+from .remote import (
+    RemoteNodeConfig,
+    SshTransport,
+    find_ssh_tools,
+    probe_remote_node,
+    run_remote_job,
+)
 from .reporting import ReportLimits, collect_report
 from .tcp import reconstruct_tcp_stream
 from .telnet import index_telnet
@@ -332,6 +339,28 @@ def _parser() -> argparse.ArgumentParser:
     plugin_run.add_argument("manifest", type=Path)
     plugin_run.add_argument("--artifact", required=True)
 
+    remote_probe = commands.add_parser(
+        "remote-probe", help="probe a Linux analysis node over constrained SSH"
+    )
+    remote_probe.add_argument("--host", required=True)
+    remote_probe.add_argument(
+        "--path", action="append", required=True, help="absolute remote executable path"
+    )
+    remote_probe.add_argument("--ssh", type=Path)
+    remote_probe.add_argument("--sftp", type=Path)
+    remote_probe.add_argument("--connect-timeout", type=int, default=15)
+
+    remote_run = commands.add_parser(
+        "remote-run", help="run one declared analyzer on a Linux node"
+    )
+    remote_run.add_argument("project", type=Path)
+    remote_run.add_argument("manifest", type=Path)
+    remote_run.add_argument("--artifact", required=True)
+    remote_run.add_argument("--host", required=True)
+    remote_run.add_argument("--ssh", type=Path)
+    remote_run.add_argument("--sftp", type=Path)
+    remote_run.add_argument("--remote-root", default=".auto-shark-jobs")
+
     probe = commands.add_parser("probe", help="probe TShark capabilities")
     probe.add_argument("--tshark", type=Path, help="explicit path to tshark executable")
     probe.add_argument("--json", action="store_true", help="emit the complete JSON profile")
@@ -375,6 +404,50 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print(
                 json.dumps(
                     run_plugin(args.project, args.manifest, args.artifact),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    indent=2,
+                )
+            )
+            return 0
+        if args.command == "remote-probe":
+            ssh, sftp = find_ssh_tools(args.ssh, args.sftp)
+            if ssh is None or sftp is None:
+                print("error: ssh and sftp clients are required", file=sys.stderr)
+                return 2
+            probe = probe_remote_node(
+                RemoteNodeConfig(
+                    host=args.host,
+                    ssh_executable=ssh,
+                    sftp_executable=sftp,
+                    connect_timeout_seconds=args.connect_timeout,
+                ),
+                args.path,
+            )
+            print(json.dumps(probe, ensure_ascii=False, sort_keys=True, indent=2))
+            return 0 if probe["available"] else 2
+        if args.command == "remote-run":
+            ssh, sftp = find_ssh_tools(args.ssh, args.sftp)
+            if ssh is None or sftp is None:
+                print("error: ssh and sftp clients are required", file=sys.stderr)
+                return 2
+            print(
+                json.dumps(
+                    run_remote_job(
+                        args.project,
+                        SshTransport(
+                            RemoteNodeConfig(
+                                host=args.host,
+                                ssh_executable=ssh,
+                                sftp_executable=sftp,
+                                remote_root=args.remote_root,
+                            )
+                        ),
+                        args.manifest,
+                        args.artifact,
+                        node_name=args.host,
+                        remote_root=args.remote_root,
+                    ),
                     ensure_ascii=False,
                     sort_keys=True,
                     indent=2,

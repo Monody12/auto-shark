@@ -636,6 +636,30 @@ Environment paths below are local evidence, not production defaults:
   produced file matching the recorded hashes. The project database passes
   integrity and foreign-key checks. Machine-local smoke files live under
   `%LOCALAPPDATA%\AutoShark\m7-smoke`.
+- M7 checkpoint 7B adds the constrained SSH/SFTP remote runner. A
+  `RemoteTransport` interface backs both the production `SshTransport`
+  (argument-list ssh/sftp invocation, BatchMode, declared connect timeout,
+  charset-validated host/paths/tokens so no remote shell metacharacter can
+  pass) and an injectable fake for tests. `remote-probe` reports
+  `test -x` availability for absolute remote executables without `PATH`
+  lookup; `remote-run` reuses `auto-shark.plugin/v1` manifests whose
+  executable must be an absolute POSIX path and whose substituted argument
+  tokens must be shell-safe, hash-verifies the artifact Blob, stages the job
+  spec with `request.json`/`request_sha256`, uploads into
+  `jobs/remote/<job-id>/`, fetches the declared result JSON plus any
+  `output_files` it declares, records every fetched file hash, persists
+  plugin_run/detail/output/skip rows plus the schema 1 `remote_job` row with
+  request/result SHA-256, and reports completed/failed/timeout with explicit
+  fetch/limit/invalid-result skips.
+- Final 7B verification passes Ruff; Windows CPython 3.11.15 reports 198
+  tests at 85 percent total coverage (`remote.py` 85 percent, `plugins.py`
+  90 percent); CPython 3.9.25 reports 191 passed plus the expected widget
+  skip. `uv build` succeeds and the wheel contains `remote.py`. Local
+  ssh/sftp clients were capability-detected on the Windows controller (Git
+  OpenSSH). Fake-transport tests cover command construction, request/result
+  hash round trips, failure/timeout/missing-result statuses, unsafe-manifest
+  rejection, and sftp batch quoting; real Linux-node execution remains
+  pending user-provided node credentials and is recorded as residual risk.
 
 ## Active decisions
 
@@ -687,8 +711,8 @@ Environment paths below are local evidence, not production defaults:
 
 ## Next executable step
 
-Implement M7 checkpoint 7B from `docs/M7_IMPLEMENTATION.md`: the constrained
-SSH/SFTP Linux runner with absolute remote-executable probing, allowlisted
-jobs, request/response hash verification, and `remote_job` persistence.
-7C (the `ctf-stego-toolkit` adapter) stays blocked on that toolkit
-independently providing the JSON output/output-directory contract.
+Validate `remote-probe`/`remote-run` against the real CentOS node using the
+user-local secure connection configuration, then decide whether 7C
+(`ctf-stego-toolkit` adapter) is unblocked by that toolkit gaining the JSON
+output/output-directory contract. After M7 closes, start M8 packaging and
+release validation from `docs/ROADMAP.md`.
