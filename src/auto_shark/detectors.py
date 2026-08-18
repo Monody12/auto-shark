@@ -498,8 +498,11 @@ def detect_project(
     max_preview_bytes: int = 256,
     max_webshell_fields: int = 100_000,
     max_webshell_value_bytes: int = 64 * 1024,
+    max_ognl_fields: int = 100_000,
+    max_ognl_body_bytes: int = 1024 * 1024,
 ) -> ProjectDetectionSummary:
     """Run the currently enabled bounded M4 detector set."""
+    from .ognl_detection import detect_ognl_command_injection
     from .sql_detection import detect_sql_injection
     from .webshell_detection import detect_webshell_activity
 
@@ -530,8 +533,17 @@ def detect_project(
         max_findings=max_findings,
         max_preview_bytes=max_preview_bytes,
     )
+    ognl = detect_ognl_command_injection(
+        project_path,
+        max_transactions=max_transactions,
+        max_fields=max_ognl_fields,
+        max_body_bytes=max_ognl_body_bytes,
+        max_events=max_events,
+        max_findings=max_findings,
+        max_preview_bytes=max_preview_bytes,
+    )
     rebuild_manual_queue(project_path)
-    statuses = {unknown.status, sql.status, webshell.status}
+    statuses = {unknown.status, sql.status, webshell.status, ognl.status}
     if "failed" in statuses:
         status = "failed"
     elif "partial" in statuses:
@@ -544,10 +556,16 @@ def detect_project(
         "auto-shark.detect/v1",
         str(project_path.resolve()),
         status,
-        (unknown.run_id, sql.run_id, webshell.run_id),
-        unknown.inputs_processed + sql.parameters_processed + webshell.transactions_processed,
-        unknown.inputs_skipped + sql.inputs_skipped + webshell.inputs_skipped,
+        (unknown.run_id, sql.run_id, webshell.run_id, ognl.run_id),
+        unknown.inputs_processed
+        + sql.parameters_processed
+        + webshell.transactions_processed
+        + ognl.transactions_processed,
+        unknown.inputs_skipped
+        + sql.inputs_skipped
+        + webshell.inputs_skipped
+        + ognl.inputs_skipped,
         unknown.candidates,
-        sql.findings + webshell.findings,
-        sql.events + webshell.events,
+        sql.findings + webshell.findings + ognl.findings,
+        sql.events + webshell.events + ognl.events,
     )

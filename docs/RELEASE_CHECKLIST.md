@@ -1,12 +1,14 @@
-# v1 release checklist
+# v0.2.0 release checklist
 
 Status legend: [x] verified with recorded evidence, [ ] pending execution.
 
 ## Code and tests
 
 - [x] Ruff clean on Windows Python 3.11.
-- [x] Full suite green on Windows Python 3.11 with coverage.
-- [x] Full suite green on Linux/Python 3.9 semantics (widget tests skip).
+- [x] Full suite green on Windows Python 3.11.15 with real TShark 4.6.7:
+      274 passed.
+- [x] Full suite green on Windows Python 3.9.25 minimum-version semantics:
+      264 passed and one optional GUI-widget skip.
 - [x] `uv build` produces sdist + wheel; wheel contains every runtime module
       including `plugins.py`, `remote.py`, `reporting.py`, `exporting.py`,
       `gui/*`, and `assets/cwd_adapter.py`.
@@ -28,8 +30,9 @@ Status legend: [x] verified with recorded evidence, [ ] pending execution.
       hash verification.
 - [x] Real `ctf-stego-toolkit` run through the working-directory adapter;
       terminal output preserved as hashed evidence files.
-- [ ] Real Linux-node `remote-probe`/`remote-run` validation (requires
-      user-provided node credentials; fake-transport tests cover the logic).
+- [x] Linux-node capability probe and adapter setup over the configured SSH
+      connection. A full toolkit run was bounded and recorded as `exit 124`
+      after producing output; lightweight analyzer validation remains useful.
 
 ## Packaging and docs
 
@@ -39,15 +42,35 @@ Status legend: [x] verified with recorded evidence, [ ] pending execution.
       plugins/remote, and the safety model.
 - [x] Example plugin manifests documented in `plugins/examples/README.md`.
 - [x] `scripts/auto-shark-gui.cmd` launcher for Windows desktops.
-- [x] Version 0.1.0 with Beta classifier.
-- [x] Out-of-the-box Windows bundle: PyInstaller onedir (shared spec
+- [x] Version 0.2.0 with Beta classifier.
+- [x] Windows portable package: PyInstaller onedir (shared spec
       `scripts/autoshark.spec`, launchers in `scripts/launcher_*.py`) with
       embedded Python 3.11 and PySide6, `AutoShark.exe` (GUI) and
-      `auto-shark.exe` (CLI), zipped with LICENSE/notices/install README.
-      Packaged-executable smoke passed locally: probe, full analyze, report,
-      export, and GUI startup.
-- [x] GitHub Release v0.1.0 with the bundle zip, wheel, sdist, and
-      SHA256SUMS as assets.
+      `auto-shark.exe` (CLI), LICENSE/notices, and a stable `AutoShark`
+      archive root. Packaged CLI probe/analyze/report smoke passed locally.
+- [x] Windows installer: Inno Setup `scripts/windows_installer.iss` uses a
+      stable AppId and fixed per-user install directory, so a later installer
+      upgrades the existing copy in place and preserves projects.
+- [x] Reproducible build script `scripts/build_windows_release.ps1` emits the
+      installer, portable ZIP, wheel, sdist, and `SHA256SUMS`.
+- [ ] Tag-triggered GitHub Release workflow publishes both Windows packages.
+
+## v0.2.0 local release evidence
+
+- [x] Frozen CLI reports `auto-shark 0.2.0`; real-TShark probe, body extraction,
+      scan, and JSON report smoke passed on the committed HTTP fixture.
+- [x] Frozen GUI remained running under the offscreen Qt backend; the portable
+      archive has a stable `AutoShark` root and contains the remote
+      `cwd_adapter.py` runtime asset.
+- [x] Installed v0.1.1, created a project, added a stale `_internal` marker,
+      upgraded in place to v0.2.0, and verified the marker was removed while
+      the project remained readable. Silent uninstall removed the application
+      directory and preserved the project and its upgrade report.
+- [x] `SHA256SUMS` independently verified for all four release assets:
+      wheel `5fedd525844129cc62f2d05741de044d04cc1425f07b6e2e06c40bd856be9780`,
+      sdist `d08fde30a4d05b788e6cf70b27f55070cf249595753afb24709f85caa198ccc6`,
+      portable ZIP `1368266fa68103446bcd97ee28aac61f9fe5e4faa7f9ff21a9835b64cf3401cb`,
+      installer `602f2922275c90c70031987b2b262ebc18312a918207a911a0c8b4ba0e405eae`.
 
 ## Clean-machine install test (run once before announcing)
 

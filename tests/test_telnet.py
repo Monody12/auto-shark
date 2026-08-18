@@ -218,6 +218,21 @@ def test_record_builder_keeps_cr_nul_in_one_bounded_application_record(tmp_path)
     ]
 
 
+def test_record_builder_treats_bare_cr_as_line_boundary(tmp_path) -> None:
+    blob = tmp_path / "stream.bin"
+    blob.write_bytes(b"user\rnext\r\nfinal")
+    builder = _RecordBuilder(blob, "client", max_record_bytes=100, max_records=10)
+
+    builder.add(telnet_module.TelnetByteRecord("application", 0, 16))
+    records = builder.finish()
+
+    assert [(item.start, item.end, item.semantic_label) for item in records] == [
+        (0, 5, "line"),
+        (5, 11, "line"),
+        (11, 16, None),
+    ]
+
+
 def test_index_telnet_persists_record_budget_skip(tmp_path, monkeypatch) -> None:
     root, database = _project(tmp_path)
     metadata, tcp = _lines()

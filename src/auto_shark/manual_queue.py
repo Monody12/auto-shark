@@ -13,7 +13,7 @@ from .core.ids import stable_id
 from .project import inspect_project
 from .storage import Database
 
-RULE_VERSION = "m3-slice3/v1"
+RULE_VERSION = "corpus-v3"
 TASK_STATES = frozenset({"open", "in-progress", "resolved", "dismissed"})
 
 
@@ -240,6 +240,66 @@ def _http_signals(connection: sqlite3.Connection, capture_id: int) -> list[_Sign
     return result
 
 
+def _dns_signals(connection: sqlite3.Connection, capture_id: int) -> list[_Signal]:
+    result = []
+    rows = connection.execute(
+        "SELECT id,evidence_id,frame_start,frame_end,locator_json FROM evidence "
+        "WHERE capture_id=? AND source_kind='dns-label-stream' ORDER BY frame_start",
+        (capture_id,),
+    ).fetchall()
+    for row in rows:
+        detail = json.loads(str(row["locator_json"]))
+        score = max(60, min(100, int(detail.get("score", 60))))
+        detail["next_step"] = (
+            "Review the bounded decoded preview and retransmissions. Export only "
+            "structurally validated artifacts; otherwise confirm framing and ordering manually."
+        )
+        result.append(
+            _Signal(
+                "evidence",
+                str(row["evidence_id"]),
+                "protocol-review",
+                "suspicious-dns-encoded-labels",
+                score,
+                detail,
+                ((int(row["id"]), "dns-label-stream"),),
+            )
+        )
+    return result
+
+
+def _tftp_signals(connection: sqlite3.Connection, capture_id: int) -> list[_Signal]:
+    result = []
+    rows = connection.execute(
+        "SELECT id,evidence_id,locator_json FROM evidence "
+        "WHERE capture_id=? AND source_kind='tftp-data' ORDER BY frame_start,evidence_id",
+        (capture_id,),
+    ).fetchall()
+    for row in rows:
+        detail = json.loads(str(row["locator_json"]))
+        status = str(detail.get("status") or "unknown")
+        complete = status in {"complete", "empty"}
+        detail["next_step"] = (
+            "Inspect the recovered file bytes and metadata; do not execute transferred "
+            "packages. Continue with declared image/archive analyzers when appropriate."
+            if complete
+            else "Review missing, conflicting, or budget-limited TFTP blocks before "
+            "treating the reconstructed bytes as a complete file."
+        )
+        result.append(
+            _Signal(
+                "evidence",
+                str(row["evidence_id"]),
+                "artifact-review" if complete else "protocol-review",
+                "tftp-file-transfer" if complete else "tftp-incomplete-transfer",
+                70 if complete else 85,
+                detail,
+                ((int(row["id"]), "tftp-transfer"),),
+            )
+        )
+    return result
+
+
 def _unsupported_signals(
     connection: sqlite3.Connection,
     capture_id: int,
@@ -254,20 +314,68 @@ def _unsupported_signals(
         (capture_id,),
     ).fetchall()
     selected = rows[:max_unsupported_tasks]
-    result = [
-        _Signal(
-            "protocol",
-            str(row["subject_id"]),
-            "protocol-review",
-            "unsupported-protocol",
-            min(60, 30 + int(row["frame_count"] > 10) * 10),
-            {
-                "frame_count": int(row["frame_count"]),
-                "protocol_label": str(row["protocol_label"]),
-            },
+    result = []
+    for row in selected:
+        label = str(row["protocol_label"])
+        frame_count = int(row["frame_count"])
+        detail: dict[str, object] = {
+            "frame_count": frame_count,
+            "protocol_label": label,
+        }
+        if label == "rtp":
+            rule, priority = "voip-rtp-audio", 75
+            detail["next_step"] = (
+                "Run voip-extract for G.711, review both call directions, and listen "
+                "for speech, DTMF, or modem tones."
+            )
+        elif label == "rtpevent":
+            rule, priority = "rtp-telephone-event", 70
+            detail["next_step"] = (
+                "Review RTP telephone-event values separately as possible DTMF digits."
+            )
+        elif label in {"sip", "sdp"}:
+            rule, priority = "voip-signaling", 60
+            detail["next_step"] = (
+                "Inspect SIP/SDP call setup, negotiated codecs, media ports, and call IDs."
+            )
+        elif label == "snmp":
+            rule, priority = "snmp-sensitive-values", 65
+            detail["next_step"] = (
+                "Review SNMP community strings, request/response OIDs, and bounded "
+                "OctetString/variable-binding text for credentials, host details, or flags."
+            )
+        elif label == "icmp":
+            rule, priority = "icmp-side-channel-review", 55
+            detail["next_step"] = (
+                "Run icmp-triage. Compare echo requests with explicit response frames, inspect "
+                "printable or varying TTL values, and review nonstandard payload bytes."
+            )
+        elif label == "tftp":
+            rule, priority = "tftp-traffic", 65
+            detail["next_step"] = (
+                "Run tftp-extract to reconstruct both RRQ downloads and WRQ uploads, "
+                "then inspect transferred files without executing them."
+            )
+        elif label == "tls":
+            rule, priority = "tls-encrypted-traffic", 55
+            detail["next_step"] = (
+                "Look for a challenge-provided TLS key log or RSA private key. Import it into "
+                "Wireshark/TShark; RSA keys only decrypt compatible legacy RSA key exchanges, "
+                "not ECDHE or TLS 1.3 sessions."
+            )
+        else:
+            rule = "unsupported-protocol"
+            priority = min(60, 30 + int(frame_count > 10) * 10)
+        result.append(
+            _Signal(
+                "protocol",
+                str(row["subject_id"]),
+                "protocol-review",
+                rule,
+                priority,
+                detail,
+            )
         )
-        for row in selected
-    ]
     return result, max(0, len(rows) - len(selected))
 
 
@@ -351,6 +459,8 @@ def rebuild_manual_queue(
             + _artifact_signals(connection, capture_id)
             + _tcp_signals(connection, capture_id)
             + _http_signals(connection, capture_id)
+            + _dns_signals(connection, capture_id)
+            + _tftp_signals(connection, capture_id)
             + _coverage_signals(connection, capture_id)
             + unsupported
         )

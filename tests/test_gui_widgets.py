@@ -29,6 +29,12 @@ def qapp():
     yield application
 
 
+@pytest.fixture(autouse=True)
+def english_gui_locale(monkeypatch):
+    """Keep legacy English assertions deterministic on Chinese Windows hosts."""
+    monkeypatch.setenv("AUTO_SHARK_LANGUAGE", "en-US")
+
+
 def _widget_project(tmp_path: Path) -> Path:
     capture = tmp_path / "source.pcap"
     capture.write_bytes(b"pcap")
@@ -71,6 +77,16 @@ def test_window_builds_all_pages_with_no_project_state(qapp) -> None:
         window._refresh_page(name)()
         assert "No project open" in window._banners[name].text()
     assert window.services is None
+
+
+def test_window_uses_simplified_chinese_for_chinese_locale(qapp, monkeypatch) -> None:
+    monkeypatch.setenv("AUTO_SHARK_LANGUAGE", "zh-CN")
+    window = MainWindow()
+
+    assert window._language == "zh"
+    assert window._nav.item(0).text() == "概览"
+    assert window._overview_table.horizontalHeaderItem(0).text() == "指标"
+    assert window._uri_edit.placeholderText() == "精确 URI，留空表示不过滤"
 
 
 def test_open_project_populates_views_and_details(qapp, tmp_path) -> None:

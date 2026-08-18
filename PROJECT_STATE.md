@@ -755,10 +755,262 @@ Environment paths below are local evidence, not production defaults:
 - PyCharm was not found in the standard install/registry locations. It is not a
   build prerequisite and no installation is planned automatically.
 
+## 2026-08-17 optimization checkpoint
+
+- The previously pending product-surface work is now implemented in the
+  working tree: image-artifact analyzer orchestration, HTTP transaction detail
+  parameters in the GUI, report assessment/next-step hints, Linux
+  `remote-setup` and `image-analyze` CLI surfaces, and a corpus expansion
+  strategy are documented. The existing uncommitted work from the prior
+  session was preserved and verified rather than reverted.
+- Fixed a cwd-adapter regression where a bare inner argument such as `pass`
+  was converted to a path merely because a same-named directory existed in the
+  controller cwd. Only path-shaped arguments are now absolutized.
+- Added the Windows dual-package release flow: `scripts/build_windows_release.ps1`,
+  `scripts/windows_installer.iss`, `scripts/README-WINDOWS.txt`, and the tag
+  workflow `.github/workflows/release.yml`. The installer has a stable AppId,
+  per-user fixed directory, in-place `_internal` replacement, and preserved
+  project data. The portable ZIP always has a top-level `AutoShark` directory.
+- `uv.lock` now records the build group with PyInstaller 6.22.1. Windows
+  CPython 3.11.15 full suite: 217 passed. Ruff: clean. Focused adapter,
+  reporting, query, GUI-service, image-analysis, and packaging tests: 21
+  passed.
+- Real package build succeeded with PyInstaller 6.22.1 and Inno Setup 6.7.3.
+  Final local artifacts are under `%LOCALAPPDATA%\AutoShark\releases\0.1.1-final`:
+  installer 33,566,631 bytes SHA-256
+  `baf9dc56217353f63ac705e9bc4ff1f73f8415f9320015cba43fd9afaa46a6ff`,
+  portable ZIP 50,153,199 bytes SHA-256
+  `727b5e1152152433300363d8196d9213ff820217bd58e8af3c7e1232e6dc54d2`,
+  wheel SHA-256 `0e336e6adaf5ecfec3059fff7227a9db9d25ea036e3e408f2f4cc9254c8b99c4`,
+  sdist SHA-256 `415d45e0dd8ec8998a7777b68b1ba13d72c1716e7ee26e49eb15dfe4c3eb1c4d`.
+  Packaged CLI `--version`, real TShark probe, full fixture analyze/report,
+  stable ZIP root, checksum manifest, and silent install/upgrade/uninstall
+  smoke all passed. The upgrade smoke confirmed a stale `_internal` file was
+  removed while the installed CLI reported `auto-shark 0.1.1`.
+- Linux live validation: `remote-probe` confirmed `/usr/bin/python3`,
+  `/usr/bin/file`, `/usr/bin/strings`, `/usr/local/bin/zsteg`, and `/usr/bin/7z`;
+  `remote-setup` uploaded `.auto-shark-jobs/cwd_adapter.py`. The full toolkit
+  run returned bounded `exit 124` after producing output and reported missing
+  steghide/stegseek/outguess/jphide/openstego/foremost/gifsicle capabilities;
+  no service was restarted or altered.
+
+## 2026-08-17 corpus-driven protocol checkpoint
+
+- Added `src/auto_shark/dns.py` and the `dns-triage` CLI/GUI stage. It uses
+  payload-free TShark DNS query fields, groups bounded hex/Base32/Base64URL
+  labels by route/base domain, records duplicate and byte-volume signals, and
+  creates a persistent evidence/manual-queue item. Only a unique PNG with
+  valid chunk CRCs is promoted to an artifact; uncertain streams remain
+  bounded preview evidence.
+- The BSides San Francisco CTF 2017 dnscap sample is stored locally under the
+  user's practice corpus. Capture SHA-256 is
+  `2913744793e3b95676d0713aef7c7df42ddb2f8ffece2b022c7ee727b833f59`.
+  Real TShark 4.6.7 triage saw 220 encoded queries and 18,101 decoded bytes,
+  found one score-100 `skullseclabs.org` group over frames 1-381, inferred a
+  9-byte header, and recovered one 11,497-byte PNG. Recovered PNG SHA-256 is
+  `d3ff9f96c3b0e1ed4f6f8dcc6dce07a33d5e223e8299340d35169980ca6809d7`.
+- Clean runtime project
+  `%LOCALAPPDATA%\AutoShark\projects\bsidessf-dnscap-20260817.auto-shark`
+  passes SQLite integrity and foreign-key checks, has one DNS stream evidence
+  row plus one precise `dns-carved-file` range (offset 95, length 11,497), one
+  complete image artifact, one priority-100 manual task, and stable repeated
+  report bytes (13,311 bytes,
+  `987210e23d33cdeb667a3de6c49488e28520f94efda94cb0549f5b1b90e69232`).
+  The earlier zero-task result is retained in the challenge write-up as the
+  pre-detector gap; it is not the current behavior.
+- Windows Python 3.11.15: Ruff clean, 226 tests passed. Python 3.9.25: 217
+  passed and one expected GUI-widget skip. `uv build` succeeds and the wheel
+  contains both `auto_shark/dns.py` and `auto_shark/voip.py`.
+- Solved and saved the 2016 CFF 简单网管协议 sample at
+  `C:\Users\Administrator\OneDrive\CTF\Question\Misc-pcap`:
+  `2016cff_simple_snmp.pcapng`, 2,291,956 bytes, SHA-256
+  `6c9791f0acf3af7edb36c99131c1307d74e06f7e32c4ef6b5ee6f11497d1db`.
+  The 4,306-frame mixed capture contains 192 SNMP frames. Independent TShark
+  inspection found frame 3588, community `public`, OID
+  `1.3.6.1.2.1.1.6.0`, and the answer embedded in an OctetString. The local
+  write-up and `solve_2016cff_simple_snmp.py` contain the answer; no answer
+  file was used by Auto-Shark.
+- A clean Auto-Shark run processed all 4,306 frames and produced 46 review
+  tasks; the SNMP task was initially generic priority 40. The queue now emits
+  a generic `snmp-sensitive-values` signal at priority 65 with bounded advice
+  to inspect community/OID/OctetString values. It does not auto-extract SNMP
+  flags or pretend to understand every MIB.
+
+## 2026-08-17 TFTP corpus checkpoint
+
+- Added `src/auto_shark/tftp.py` and the `tftp-extract` CLI/GUI stage. It uses
+  one bounded discovery pass and a second pass over negotiated UDP routes,
+  supports RRQ downloads and WRQ uploads, handles duplicates, conflicts,
+  missing blocks, explicit server errors, byte/count budgets, and 16-bit block
+  number wrap. Only complete, gap-free, conflict-free bytes become artifacts.
+- PicoCTF 2021 Trivial Flag Transfer Protocol was solved and saved in the user
+  practice corpus. Capture SHA-256 is
+  `2cf17f1a8837fb25613743df5c9b5d1a0748c783bfc02980689443adebd94156`.
+  Real TShark 4.6.7 extraction saw 19 discovery packets and 76,192 selected
+  DATA packets, producing one WRQ upload, five complete RRQ downloads, and two
+  `File not found` records with no malformed rows or exhausted budgets.
+- The previously missed WRQ `instructions.txt` was recovered at frame 3.
+  `picture2.bmp` crossed block `65535 -> 0` and reconstructed to 36,578,358
+  bytes, SHA-256
+  `8cb8135856261596696a625efb5850778013f0e7ea5caeb5f6ba6a2de30f0308`.
+  The local no-answer-constant solver derives `DUEDILIGENCE` from ROT13 text;
+  an actual StegSeek 0.6 run recovered the final file from `picture3.bmp`.
+- Focused TFTP, GUI-stage, queue, and reporting regression is 26 tests passed.
+  Full Windows Python 3.11 regression with real TShark is `254 passed`;
+  Python 3.9 is `244 passed, 1 skipped` (optional GUI extra). Ruff and
+  `uv build` pass, `git diff --check` reports no whitespace error, and the
+  wheel contains `auto_shark/tftp.py`, `icmp.py`, `dns.py`, and `voip.py`.
+
 ## Next executable step
 
-None for automated development: v1 (0.1.0) is complete and pushed. The two
-remaining acceptance items are user-executable and scripted in
-`docs/RELEASE_CHECKLIST.md`: the one-time clean-machine install/GUI test and
-live Linux-node `remote-probe`/`remote-run` validation with user-held
-credentials.
+Complete and publish the v0.2.0 release, then continue simple/medium non-SQLi
+BUUCTF traffic challenges from the supplied practice dashboard. Record
+attachment availability separately from write-up-only evidence, save solved
+captures and Chinese write-ups in the user's practice corpus, and only add
+generalizable analyzers when real captures expose a bounded gap. The one-time
+independent clean-machine GUI acceptance and a lightweight Linux analyzer
+manifest (`file`, `strings`, or `zsteg`) remain useful follow-up validation.
+
+## 2026-08-17 HTTP/TLS/Telnet corpus checkpoint
+
+- Fresh Struts2 validation recognizes `{FLAG:...}` as a rank-99 candidate and
+  rejects the prior CSS `key{color:...}` false positive. The new bounded OGNL
+  detector inspects URL-form field names, extracts `ProcessBuilder` commands,
+  persists three `web-command-execution` events at request frames 1365, 1387,
+  and 1444, links response frames 1367, 1389, and 1446, marks the repeated
+  command as a duplicate, and emits one critical endpoint finding. The
+  detector is included in `detect`; `timeline --detector` exposes its events.
+- The undecrypted Hack Dat Kiwi TLS baseline remains opaque by design. After
+  inventory, its manual queue emits `tls-encrypted-traffic` at priority 55 and
+  explains key-log/RSA input plus the ECDHE/TLS 1.3 boundary. Auto-Shark still
+  does not accept TLS key material or claim decryption.
+- Solved and saved `2016cff_remote_login_telnet.pcapng` (18,534,380 bytes,
+  SHA-256 `d4266c1bf52913f0b89cd037ad5dc05927a3ba1446076ab4bea234a499eceb11`)
+  with a no-answer-constant script and Chinese write-up. The 24,271-frame
+  mixed capture has one complete Telnet stream: 636 metadata frames, 357
+  client bytes, 70,154 server bytes, and four server-side flag candidates.
+- The Telnet parser is now version 2. Bare CR is a line terminator while
+  CRLF and CR-NUL stay in one exact record. Real rerun restores
+  `prompt:login -> ira\r` and `prompt:password -> filename.txt\r`
+  `responds-to` relations while retaining Tab/backspace controls and exact
+  frame/source mappings. Focused Telnet tests report 9 passed.
+
+## 2026-08-17 bilingual and side-channel checkpoint
+
+- The optional Qt client now detects Chinese Windows/Linux locales and uses
+  Simplified Chinese; all other, missing, or unknown locales fall back to
+  English. `AUTO_SHARK_LANGUAGE=zh-CN|en-US` remains a test override. Startup
+  errors and staged-analysis titles use the same translation layer.
+- Added `tcp-urgent` detector/CLI/GUI stage. It groups non-zero
+  `tcp.urgent_pointer` values by stream and direction, preserves source frame
+  ranges, emits printable text and flag-shaped candidates, and records a
+  high-confidence finding when the sequence is printable.
+- Added `usb-hid` detector/CLI/GUI stage. It inventories endpoint report
+  lengths, applies conservative Boot Keyboard checks (reserved byte, release
+  reports, known key-code ratio), recognizes supported absolute-coordinate /
+  pressure report series, and emits cross-device frame/time correlation hints.
+- Solved and saved two additional broad-practice captures under
+  `C:\Users\Administrator\OneDrive\CTF\Question\Misc-pcap`:
+  Google CTF 2016 A Cute Stegosaurus (`google_ctf_2016_a_cute_stegosaurus.pcap`,
+  SHA-256 `10a1c947de99a5de658f91d3cbf147078226673b2406b244b49df5035ac1ae19`),
+  where TCP urgent pointers spell
+  `CTF{And_You_Thought_It_Was_In_The_Picture}`, and LCTF 2018 osu!
+  (`lctf_2018_osu_usb.pcap`, SHA-256
+  `30e2a568c25c656a2442c8c509195cf718e31a510652796935e0e6434d6caaa0`),
+  where HID keyboard C-key windows select Wacom pen strokes spelling
+  `LCTF{OSU_IS_GOOD}`. Each capture has a no-answer-constant solver and a
+  Chinese write-up; the LCTF directory also contains the verified recovered
+  PNG.
+- Windows Python 3.11.15 + PySide6 6.11.1 + real TShark release-gate run:
+  `246 passed`, Ruff clean, `git diff --check` clean, and source/wheel builds
+  succeed with `UV_LINK_MODE=copy` for OneDrive compatibility. Python 3.9.25
+  core run: `228 passed, 8 skipped` (GUI extra/TShark unavailable in that
+  isolated environment).
+
+## 2026-08-17 ICMP oracle corpus checkpoint
+
+- Added `src/auto_shark/icmp.py` plus the `icmp-triage` CLI/GUI stage. It uses
+  structured TShark fields and explicit `icmp.resp_to` links to recognize
+  printable, varying request-TTL series with both answered and unanswered
+  probes. It preserves the exact frame/field evidence and does not infer
+  uncaptured guesses or emit a flag candidate.
+- Solved and saved Insomni'hack CTF 2015 Time to leak in the local practice
+  corpus. Capture SHA-256 is
+  `c9549814f2b9cef6c44e069678e3d3c6a08198973d315f05193480aef2f41f4c`.
+  The 22-packet capture contains 14 requests whose TTL values spell
+  `RSTUTRTSTTKTTL`; explicit replies produce bitmap `00101010110111`. The
+  capture is only a middle excerpt, so the complete historic answer is kept
+  in the write-up as external evidence rather than claimed as recovered.
+- Real triage produces one score-100 `icmp-ttl-oracle` finding over frames
+  1-21 and stays idempotent. A 2,048-packet MsPing capture with fixed TTL 64
+  is the negative control and produces no finding.
+- Final verification: Windows Python 3.11 with real TShark reports
+  `251 passed`; Python 3.9 reports `234 passed, 8 skipped`; Ruff and
+  `uv build` pass. The built wheel contains `auto_shark/icmp.py`,
+  `auto_shark/dns.py`, and `auto_shark/voip.py`.
+
+## 2026-08-17 BUUCTF easycap TCP-text checkpoint
+
+- The interrupted BUUCTF `sqltest` capture is preserved as
+  `buuctf_sqltest.pcapng` (2,274,484 bytes, SHA-256
+  `153412ba27407452ddd419d81e1d1f3a523940dae1317faefe3bcb13c6069287`)
+  with `buuctf_sqltest_未完成记录.md` in the local practice corpus. It is
+  explicitly not solved: the record stops after passive identification of 972
+  GET request/response pairs and two stable response lengths. No recovered
+  database values, final flag, or solver are claimed.
+- Solved and saved BUUCTF `easycap` as `buuctf_easycap.pcap` (6,802 bytes,
+  SHA-256 `5e1cb4ad2dd6aef750654f5377d9e67ed2732b97fe64d56e0603242c4b87d921`)
+  with `solve_buuctf_easycap.py` and `buuctf_easycap_题解.md`. The no-answer-
+  constant solver independently reassembles first-seen TCP bytes by raw
+  sequence and reports the captured `FLAG:` value over frames 4-76.
+- Added bounded `tcp-text` CLI/GUI triage. It selects only generic TCP/`data`
+  conversation profiles, excludes recognized application protocols, applies
+  per-stream/count/total budgets, reuses current TCP reconstruction and triage,
+  updates `data` coverage, and rebuilds the manual queue. Known-format search
+  now accepts explicit unbraced `FLAG:<mixed-token>`-style values while
+  requiring both letters and digits and deferring chunk-end matches.
+- Clean runtime project
+  `%LOCALAPPDATA%\AutoShark\projects\buuctf-easycap-tcptext-20260817.auto-shark`
+  automatically refreshed inventory, selected stream 0, reconstructed 38
+  bytes with no gaps/conflicts, and emitted one rank-100 candidate. Its exact
+  candidate evidence is offset 0, length 37, frames 4-76, with all 37 source
+  frames listed; `data` coverage is `complete`.
+- Focused verification is Ruff clean and 34 tests passed across search,
+  triage, TCP-text, GUI services, and CLI. Final Windows Python 3.11.15 with
+  real TShark reports `257 passed`; Python 3.9.25 reports `247 passed, 1
+  skipped` (optional GUI extra). `uv build` and `git diff --check` pass. Wheel
+  SHA-256 is `f5e462523f71a05b76942c6c8524372398020f647f2143d67d11f6c700e5faf0`
+  and it contains `auto_shark/tcp_text.py`, `search.py`, and `triage.py`.
+- The clean real project passes SQLite integrity and foreign-key checks. Its
+  one conversation profile, one current TCP reconstruction, one candidate,
+  and one candidate-evidence link are stable; all 22 content-addressed Blobs
+  independently rehash with zero mismatches.
+
+## 2026-08-18 v0.2.0 release checkpoint
+
+- The release version is 0.2.0 because this work adds substantial functional
+  surface beyond v0.1.1: bilingual GUI behavior, DNS/ICMP/TFTP/VoIP/TCP-text,
+  TCP urgent-pointer, USB HID, OGNL and image analysis, plus installer and
+  portable delivery. It is not a patch-only release.
+- The final audit fixed both legacy and new-code defects: leaked SFTP batch
+  files, a missing frozen remote adapter, image-analysis starvation, DNS PNG
+  aggregate budget overflow, unverified/unbounded OGNL Blob reads, unbounded
+  HTTP details, CLI tracebacks for tool errors, missing side-channel tool-run
+  provenance, incorrect budget statuses, stale manual queue entries, missing
+  post-stage queue refreshes, RTP conflicting retransmissions, and incomplete
+  TCP reconstruction coverage.
+- Final source gates pass: Ruff, compileall, and `git diff --check`; Windows
+  Python 3.11.15 with real TShark 4.6.7 reports `274 passed`; Python 3.9.25
+  reports `264 passed, 1 skipped` for the intentionally absent GUI extra.
+- The local v0.2.0 release candidate contains installer, portable ZIP, wheel,
+  sdist, and verified `SHA256SUMS`. SHA-256 values are: installer
+  `602f2922275c90c70031987b2b262ebc18312a918207a911a0c8b4ba0e405eae`,
+  portable ZIP
+  `1368266fa68103446bcd97ee28aac61f9fe5e4faa7f9ff21a9835b64cf3401cb`,
+  wheel `5fedd525844129cc62f2d05741de044d04cc1425f07b6e2e06c40bd856be9780`,
+  and sdist `d08fde30a4d05b788e6cf70b27f55070cf249595753afb24709f85caa198ccc6`.
+- Frozen CLI version/probe/analyze/report and offscreen GUI startup pass. A
+  real v0.1.1-to-v0.2.0 installer upgrade removed a stale `_internal` marker,
+  preserved the project, and read it successfully; uninstall removed the app
+  while preserving the project and report. The independent Windows 11 clean-
+  machine exercise remains explicitly pending in `docs/RELEASE_CHECKLIST.md`.

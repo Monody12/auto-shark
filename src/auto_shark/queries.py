@@ -313,14 +313,17 @@ def query_telnet_dialogues(
     _validate_page(offset, limit)
     if stream is not None and stream < 0:
         raise ValueError("TCP stream index cannot be negative")
-    if min(
-        max_records_per_dialogue,
-        max_preview_bytes,
-        max_total_preview_bytes,
-        max_source_mappings,
-        max_relations,
-        max_candidates,
-    ) <= 0:
+    if (
+        min(
+            max_records_per_dialogue,
+            max_preview_bytes,
+            max_total_preview_bytes,
+            max_source_mappings,
+            max_relations,
+            max_candidates,
+        )
+        <= 0
+    ):
         raise ValueError("Telnet query limits must be positive")
     if max_records_per_dialogue > 10_000:
         raise ValueError("Telnet records per dialogue cannot exceed 10000")
@@ -694,7 +697,11 @@ def query_manual_queue(
         raise ValueError("manual queue auxiliary limits must be positive")
     project = inspect_project(project_path)
     database = Database(project.root / "project.sqlite")
-    where = ["mt.capture_id=?", "mt.suggested_priority>=?"]
+    where = [
+        "mt.capture_id=?",
+        "mt.suggested_priority>=?",
+        "NOT (mt.state='open' AND mt.suggested_priority=0)",
+    ]
     parameters: list[object] = [None, min_priority]
     if state is not None:
         where.append("mt.state=?")
@@ -811,3 +818,137 @@ def query_manual_queue(
         evidence_links_returned=evidence_returned,
         items=tuple(items),
     )
+
+
+def query_transaction_detail(
+    project_path: Path,
+    transaction_id: str,
+    *,
+    max_value_bytes: int = 256,
+    max_parameters: int = 256,
+    max_uri_bytes: int = 4096,
+    max_host_bytes: int = 1024,
+) -> dict:
+    """Return one transaction with parsed query and form parameters.
+
+    Values are bounded previews; nothing reads blob bytes.
+    """
+    if min(max_value_bytes, max_parameters, max_uri_bytes, max_host_bytes) <= 0:
+        raise ValueError("transaction detail limits must be positive")
+    if max_parameters > 1000 or max(max_uri_bytes, max_host_bytes) > 1024 * 1024:
+        raise ValueError("transaction detail limits exceed the supported maximum")
+    project = inspect_project(project_path)
+    database = Database(project.root / "project.sqlite")
+    database.initialize()
+    with database.connect() as connection:
+        row = connection.execute(
+            "SELECT t.id,t.transaction_id,t.status,"
+            "req.id request_db,req.representative_frame request_frame,"
+            "resp.id response_db,resp.representative_frame response_frame "
+            "FROM transaction_record t "
+            "LEFT JOIN protocol_message req ON req.id=t.request_message_id "
+            "LEFT JOIN protocol_message resp ON resp.id=t.response_message_id "
+            "WHERE t.transaction_id=?",
+            (transaction_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"transaction not found: {transaction_id}")
+        request_db, response_db = row["request_db"], row["response_db"]
+        http_request = http_response = None
+        if request_db is not None:
+            http_request = connection.execute(
+                "SELECT method,uri,host FROM http_message WHERE protocol_message_id=?",
+                (request_db,),
+            ).fetchone()
+        if response_db is not None:
+            http_response = connection.execute(
+                "SELECT response_code,response_phrase FROM http_message "
+                "WHERE protocol_message_id=?",
+                (response_db,),
+            ).fetchone()
+        form_fields = []
+        form_fields_truncated = False
+        if request_db is not None:
+            field_rows = connection.execute(
+                "SELECT ff.name,ev.text_value FROM form_field ff "
+                "JOIN evidence ev ON ev.id=ff.raw_value_evidence_id "
+                "WHERE ff.protocol_message_id=? ORDER BY ff.ordinal LIMIT ?",
+                (request_db, max_parameters + 1),
+            ).fetchall()
+            form_fields_truncated = len(field_rows) > max_parameters
+            for field in field_rows[:max_parameters]:
+                raw = "" if field["text_value"] is None else str(field["text_value"])
+                truncated = len(raw.encode("utf-8")) > max_value_bytes
+                preview = raw.encode("utf-8")[:max_value_bytes].decode("utf-8", errors="ignore")
+                name = str(field["name"])
+                name_bytes = name.encode("utf-8")
+                item = {
+                    "name": name_bytes[:max_value_bytes].decode("utf-8", errors="ignore"),
+                    "value": preview,
+                    "truncated": truncated,
+                }
+                if len(name_bytes) > max_value_bytes:
+                    item["name_truncated"] = True
+                form_fields.append(item)
+        body_states = {}
+        for message_db, role in ((request_db, "request"), (response_db, "response")):
+            if message_db is None:
+                continue
+            states = connection.execute(
+                "SELECT status,count(*) FROM http_body WHERE protocol_message_id=? GROUP BY status",
+                (message_db,),
+            ).fetchall()
+            body_states[role] = {str(item[0]): int(item[1]) for item in states}
+
+    query_params = []
+    raw_uri = str(http_request["uri"]) if http_request and http_request["uri"] else ""
+    uri_bytes = raw_uri.encode("utf-8")
+    uri = uri_bytes[:max_uri_bytes].decode("utf-8", errors="ignore")
+    raw_host = str(http_request["host"]) if http_request and http_request["host"] else ""
+    host_bytes = raw_host.encode("utf-8")
+    host = host_bytes[:max_host_bytes].decode("utf-8", errors="ignore")
+    query_params_truncated = False
+    if "?" in raw_uri:
+        from urllib.parse import parse_qsl
+
+        query_parts = raw_uri.split("?", 1)[1].split("&", max_parameters)
+        query_params_truncated = len(query_parts) > max_parameters
+        bounded_query = "&".join(query_parts[:max_parameters])
+        for name, value in parse_qsl(
+            bounded_query,
+            keep_blank_values=True,
+            max_num_fields=max_parameters,
+        ):
+            name_bytes = name.encode("utf-8")
+            encoded = value.encode("utf-8")
+            item = {
+                "name": name_bytes[:max_value_bytes].decode("utf-8", errors="ignore"),
+                "value": encoded[:max_value_bytes].decode("utf-8", errors="ignore"),
+                "truncated": len(encoded) > max_value_bytes,
+            }
+            if len(name_bytes) > max_value_bytes:
+                item["name_truncated"] = True
+            query_params.append(item)
+    return {
+        "schema_version": "auto-shark.transaction-detail/v1",
+        "transaction_id": transaction_id,
+        "status": str(row["status"]),
+        "request": {
+            "frame": row["request_frame"],
+            "method": http_request["method"] if http_request else None,
+            "uri": uri or None,
+            "uri_truncated": len(uri_bytes) > max_uri_bytes,
+            "host": host or None,
+            "host_truncated": len(host_bytes) > max_host_bytes,
+            "query_params": query_params,
+            "query_params_truncated": query_params_truncated,
+            "form_fields": form_fields,
+            "form_fields_truncated": form_fields_truncated,
+        },
+        "response": {
+            "frame": row["response_frame"],
+            "code": http_response["response_code"] if http_response else None,
+            "phrase": http_response["response_phrase"] if http_response else None,
+        },
+        "body_states": body_states,
+    }

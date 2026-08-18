@@ -316,3 +316,138 @@ def test_stream_query_exposes_current_evidence_and_conflicts(tmp_path) -> None:
         "blob_sha256": blob.sha256,
         "byte_length": 6,
     }
+
+
+def test_transaction_detail_returns_bounded_parameters(tmp_path) -> None:
+
+    from auto_shark.project import create_project
+    from auto_shark.queries import query_transaction_detail
+    from auto_shark.storage import Database
+
+    capture = tmp_path / "source.pcap"
+    capture.write_bytes(b"pcap")
+    root = tmp_path / "detail.auto-shark"
+    create_project(capture, root, allow_synced=True)
+    database = Database(root / "project.sqlite")
+    with database.connect() as connection:
+        capture_id = int(connection.execute("SELECT id FROM capture").fetchone()[0])
+        connection.execute(
+            "INSERT INTO frame(capture_id,frame_number) VALUES(?,1),(?,2)",
+            (capture_id, capture_id),
+        )
+        connection.execute(
+            "INSERT INTO protocol_message"
+            "(message_id,capture_id,representative_frame,protocol,fields_json) "
+            "VALUES('msg-1',?,1,'http','{}')",
+            (capture_id,),
+        )
+        request_db = int(connection.execute("SELECT id FROM protocol_message").fetchone()[0])
+        connection.execute(
+            "INSERT INTO protocol_message"
+            "(message_id,capture_id,representative_frame,protocol,fields_json) "
+            "VALUES('msg-2',?,2,'http','{}')",
+            (capture_id,),
+        )
+        response_db = int(
+            connection.execute(
+                "SELECT id FROM protocol_message WHERE message_id='msg-2'"
+            ).fetchone()[0]
+        )
+        connection.execute(
+            "INSERT INTO http_message(protocol_message_id,method,uri,host,response_code) "
+            "VALUES(?,'POST','/login?next=/home','ctf.local',NULL)",
+            (request_db,),
+        )
+        connection.execute(
+            "INSERT INTO http_message(protocol_message_id,response_code,response_phrase) "
+            "VALUES(?,200,'OK')",
+            (response_db,),
+        )
+        connection.execute(
+            "INSERT INTO transaction_record"
+            "(transaction_id,capture_id,protocol,request_message_id,response_message_id,"
+            "status) VALUES('tx-1',?,'http',?,?,'matched')",
+            (capture_id, request_db, response_db),
+        )
+        connection.execute(
+            "INSERT INTO evidence"
+            "(evidence_id,capture_id,source_kind,frame_start,frame_end,byte_offset,"
+            "byte_length,text_value,blob_id,locator_json) "
+            "VALUES('ev-1',?, 'form',1,1,0,9,'password1',NULL,'{}')",
+            (capture_id,),
+        )
+        evidence_db = int(connection.execute("SELECT id FROM evidence").fetchone()[0])
+        connection.execute(
+            "INSERT INTO form_field"
+            "(protocol_message_id,ordinal,name,raw_value_evidence_id,"
+            "decoded_value_evidence_id) VALUES(?,0,'password',?,?)",
+            (request_db, evidence_db, evidence_db),
+        )
+
+    detail = query_transaction_detail(root, "tx-1", max_value_bytes=256)
+    assert detail["schema_version"] == "auto-shark.transaction-detail/v1"
+    assert detail["request"]["method"] == "POST"
+    assert detail["request"]["query_params"] == [
+        {"name": "next", "value": "/home", "truncated": False}
+    ]
+    assert detail["request"]["form_fields"] == [
+        {"name": "password", "value": "password1", "truncated": False}
+    ]
+    assert detail["response"]["code"] == 200
+    with pytest.raises(ValueError):
+        query_transaction_detail(root, "missing-tx")
+
+    limited = query_transaction_detail(
+        root,
+        "tx-1",
+        max_value_bytes=3,
+        max_parameters=1,
+        max_uri_bytes=8,
+        max_host_bytes=3,
+    )
+    assert limited["request"]["uri_truncated"] is True
+    assert limited["request"]["host"] == "ctf"
+    assert limited["request"]["host_truncated"] is True
+    assert limited["request"]["query_params_truncated"] is False
+    assert limited["request"]["query_params"][0]["value"] == "/ho"
+    assert limited["request"]["form_fields"][0] == {
+        "name": "pas",
+        "name_truncated": True,
+        "value": "pas",
+        "truncated": True,
+    }
+
+
+def test_transaction_detail_caps_parameter_rows(tmp_path) -> None:
+    from auto_shark.project import create_project
+    from auto_shark.queries import query_transaction_detail
+    from auto_shark.storage import Database
+
+    capture = tmp_path / "source.pcap"
+    capture.write_bytes(b"pcap")
+    root = tmp_path / "detail-limits.auto-shark"
+    create_project(capture, root, allow_synced=True)
+    database = Database(root / "project.sqlite")
+    with database.connect() as connection:
+        capture_id = int(connection.execute("SELECT id FROM capture").fetchone()[0])
+        connection.execute("INSERT INTO frame(capture_id,frame_number) VALUES(?,1)", (capture_id,))
+        connection.execute(
+            "INSERT INTO protocol_message(message_id,capture_id,representative_frame,"
+            "protocol,fields_json) VALUES('msg-limit',?,1,'http','{}')",
+            (capture_id,),
+        )
+        message_id = int(connection.execute("SELECT last_insert_rowid()").fetchone()[0])
+        connection.execute(
+            "INSERT INTO http_message(protocol_message_id,method,uri) "
+            "VALUES(?,'GET','/x?a=1&b=2&c=3')",
+            (message_id,),
+        )
+        connection.execute(
+            "INSERT INTO transaction_record(transaction_id,capture_id,protocol,"
+            "request_message_id,status) VALUES('tx-limit',?,'http',?,'unmatched-request')",
+            (capture_id, message_id),
+        )
+
+    detail = query_transaction_detail(root, "tx-limit", max_parameters=2)
+    assert [item["name"] for item in detail["request"]["query_params"]] == ["a", "b"]
+    assert detail["request"]["query_params_truncated"] is True

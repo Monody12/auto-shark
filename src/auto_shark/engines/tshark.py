@@ -57,6 +57,10 @@ FEATURE_FIELDS = {
             "tcp.analysis.lost_segment",
         }
     ),
+    "tcp_urgent": frozenset({"tcp.flags.urg", "tcp.urgent_pointer"}),
+    "usb_hid": frozenset(
+        {"usb.src", "usb.dst", "usb.endpoint_address", "usb.capdata"}
+    ),
     "ftp": frozenset(
         {
             "ftp.request.command",

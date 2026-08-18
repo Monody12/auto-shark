@@ -8,6 +8,29 @@ def test_flag_search_finds_chunk_boundary_match_once(tmp_path) -> None:
     assert [(match.offset, match.value) for match in matches] == [(14, b"flag{cross-boundary}")]
 
 
+def test_flag_search_accepts_prefix_inside_braces_without_matching_css(tmp_path) -> None:
+    path = tmp_path / "evidence.bin"
+    path.write_bytes(
+        b"{FLAG:Example_Search_Value_123} "
+        b"body{color:#fff} key{color:#0000FF}"
+    )
+    assert [item.value for item in find_flag_matches(path, chunk_size=9)] == [
+        b"{FLAG:Example_Search_Value_123}"
+    ]
+
+
+def test_flag_search_accepts_explicit_unbraced_prefix_with_mixed_token(tmp_path) -> None:
+    path = tmp_path / "evidence.bin"
+    path.write_bytes(
+        b"FLAG:385b87afc8671dee07550290d16a8071 "
+        b"key:backgroundcolor answer:letters_only key:12345678"
+    )
+
+    assert [item.value for item in find_flag_matches(path, chunk_size=11)] == [
+        b"FLAG:385b87afc8671dee07550290d16a8071"
+    ]
+
+
 def test_flag_search_ignores_unbounded_or_malformed_text(tmp_path) -> None:
     path = tmp_path / "evidence.bin"
     path.write_bytes(b"flag{} flag{bad\nvalue} " + b"a" * 300)

@@ -3,6 +3,7 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 from auto_shark import cli
 from auto_shark.gui.services import (
@@ -35,8 +36,9 @@ def _services_project(tmp_path: Path):
             (capture_id, json.dumps({"local": str(root)})),
         )
         evidence_id = int(
-            connection.execute("SELECT id FROM evidence WHERE evidence_id='evidence-1'")
-            .fetchone()[0]
+            connection.execute("SELECT id FROM evidence WHERE evidence_id='evidence-1'").fetchone()[
+                0
+            ]
         )
         connection.execute(
             "INSERT INTO candidate"
@@ -44,12 +46,9 @@ def _services_project(tmp_path: Path):
             "VALUES('candidate-1','known-flag','flag{gui}','flag{gui}',1,100,?)",
             (_now(),),
         )
-        candidate_id = int(
-            connection.execute("SELECT id FROM candidate").fetchone()[0]
-        )
+        candidate_id = int(connection.execute("SELECT id FROM candidate").fetchone()[0])
         connection.execute(
-            "INSERT INTO candidate_evidence(candidate_id,evidence_id,role) "
-            "VALUES(?,?,'match')",
+            "INSERT INTO candidate_evidence(candidate_id,evidence_id,role) VALUES(?,?,'match')",
             (candidate_id, evidence_id),
         )
         connection.execute(
@@ -65,12 +64,9 @@ def _services_project(tmp_path: Path):
             "'medium',0.5,NULL,?)",
             (_now(),),
         )
-        finding_id = int(
-            connection.execute("SELECT id FROM finding").fetchone()[0]
-        )
+        finding_id = int(connection.execute("SELECT id FROM finding").fetchone()[0])
         connection.execute(
-            "INSERT INTO finding_evidence(finding_id,evidence_id,role) "
-            "VALUES(?,?,'support')",
+            "INSERT INTO finding_evidence(finding_id,evidence_id,role) VALUES(?,?,'support')",
             (finding_id, evidence_id),
         )
     return root
@@ -133,16 +129,37 @@ def test_services_export_and_stages(tmp_path) -> None:
     assert (tmp_path / "bundle" / "manifest.json").is_file()
 
     stages = services.analysis_stages(Path("tshark.exe"))
-    assert [stage.key for stage in stages] == ["scan", "triage", "detect", "inventory"]
-    with_capture = services.analysis_stages(Path("tshark.exe"), capture=Path("cap.pcap"))
-    assert [stage.key for stage in with_capture] == [
-        "analyze",
+    assert [stage.key for stage in stages] == [
+        "ftp",
+        "tftp",
         "scan",
         "triage",
         "detect",
         "inventory",
+        "tcp-text",
+        "dns",
+        "icmp",
+        "tcp-urgent",
+        "usb-hid",
+        "voip",
     ]
-    scan_summary = with_capture[1].run()
+    with_capture = services.analysis_stages(Path("tshark.exe"), capture=Path("cap.pcap"))
+    assert [stage.key for stage in with_capture] == [
+        "analyze",
+        "ftp",
+        "tftp",
+        "scan",
+        "triage",
+        "detect",
+        "inventory",
+        "tcp-text",
+        "dns",
+        "icmp",
+        "tcp-urgent",
+        "usb-hid",
+        "voip",
+    ]
+    scan_summary = with_capture[3].run()
     assert hasattr(scan_summary, "to_json")
 
 
@@ -155,6 +172,60 @@ def test_stage_dataclass_and_tshark_resolution(tmp_path) -> None:
     capture.write_bytes(b"pcap")
     info = create_new_project(capture, root)
     assert (info.root / "project.sqlite").is_file()
+
+
+def test_gui_ftp_stage_skips_tshark_without_required_fields(tmp_path, monkeypatch) -> None:
+    root = _services_project(tmp_path)
+    monkeypatch.setattr(
+        "auto_shark.gui.services.probe_tshark",
+        lambda _path: SimpleNamespace(features={"ftp": False}),
+    )
+
+    result = ProjectServices(root).analysis_stages(Path("tshark.exe"))[0].run()
+
+    assert result == {
+        "status": "unavailable",
+        "reason": "TShark lacks the required FTP/FTP-DATA fields",
+    }
+
+
+def test_gui_specialized_stages_refresh_manual_queue(tmp_path, monkeypatch) -> None:
+    root = _services_project(tmp_path)
+    events = []
+    monkeypatch.setattr(
+        "auto_shark.gui.services.query_summary",
+        lambda *_args, **_kwargs: {"protocols": [{"protocol_label": "rtp"}]},
+    )
+    monkeypatch.setattr(
+        "auto_shark.gui.services.rebuild_manual_queue",
+        lambda value: events.append(("queue", value)),
+    )
+
+    def fake_stage(name):
+        def run(value, tshark):
+            events.append((name, value, tshark))
+            return name
+
+        return run
+
+    monkeypatch.setattr("auto_shark.gui.services.triage_tcp_urgent", fake_stage("tcp-urgent"))
+    monkeypatch.setattr("auto_shark.gui.services.triage_usb_hid", fake_stage("usb-hid"))
+    monkeypatch.setattr("auto_shark.gui.services.extract_voip_audio", fake_stage("voip"))
+    stages = {
+        stage.key: stage for stage in ProjectServices(root).analysis_stages(Path("tshark.exe"))
+    }
+
+    assert stages["tcp-urgent"].run() == "tcp-urgent"
+    assert stages["usb-hid"].run() == "usb-hid"
+    assert stages["voip"].run() == "voip"
+    assert events == [
+        ("tcp-urgent", root, Path("tshark.exe")),
+        ("queue", root),
+        ("usb-hid", root, Path("tshark.exe")),
+        ("queue", root),
+        ("voip", root, Path("tshark.exe")),
+        ("queue", root),
+    ]
 
 
 def test_gui_cli_forwards_project_without_importing_widgets(monkeypatch, tmp_path) -> None:
@@ -180,3 +251,20 @@ def test_cli_import_stays_free_of_qt_and_widget_modules() -> None:
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "False"
+
+
+def test_gui_display_autodetection_platform_aware(monkeypatch) -> None:
+    from auto_shark.gui.app import display_available
+
+    monkeypatch.setattr("sys.platform", "win32", raising=False)
+    assert display_available() == (True, "")
+
+    monkeypatch.setattr("sys.platform", "linux", raising=False)
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    monkeypatch.delenv("XDG_SESSION_TYPE", raising=False)
+    available, reason = display_available()
+    assert available is False and "DISPLAY" in reason
+
+    monkeypatch.setenv("XDG_SESSION_TYPE", "x11")
+    assert display_available() == (True, "")

@@ -254,6 +254,7 @@ def query_findings(
 def query_timeline(
     project_path: Path,
     *,
+    detector: str = WEBSHELL_DETECTOR,
     event_kind: Optional[str] = None,
     status: Optional[str] = None,
     frame_start: Optional[int] = None,
@@ -267,6 +268,8 @@ def query_timeline(
     _validate_page(offset, limit, "timeline")
     if min(max_evidence_links, max_detail_bytes) <= 0:
         raise ValueError("timeline auxiliary limits must be positive")
+    if not detector.strip():
+        raise ValueError("timeline detector cannot be empty")
     if frame_start is not None and frame_start < 0:
         raise ValueError("timeline frame start cannot be negative")
     if frame_end is not None and frame_end < 0:
@@ -277,7 +280,7 @@ def query_timeline(
     database = Database(project.root / "project.sqlite")
     database.initialize()
     where = ["be.capture_id=?", "be.detector=?"]
-    parameters: list[object] = [None, WEBSHELL_DETECTOR]
+    parameters: list[object] = [None, detector]
     if not include_duplicates:
         where.append("be.duplicate_of IS NULL")
     if event_kind is not None:

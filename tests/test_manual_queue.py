@@ -19,9 +19,7 @@ def _fixture(tmp_path):
     database = Database(root / "project.sqlite")
     with database.connect() as connection:
         capture_id = int(connection.execute("SELECT id FROM capture").fetchone()[0])
-        connection.execute(
-            "INSERT INTO frame(capture_id,frame_number) VALUES(?,1)", (capture_id,)
-        )
+        connection.execute("INSERT INTO frame(capture_id,frame_number) VALUES(?,1)", (capture_id,))
         connection.execute(
             "INSERT INTO evidence "
             "(evidence_id,capture_id,source_kind,frame_start,frame_end,"
@@ -39,8 +37,7 @@ def _fixture(tmp_path):
         )
         candidate_db_id = int(connection.execute("SELECT last_insert_rowid()").fetchone()[0])
         connection.execute(
-            "INSERT INTO candidate_evidence(candidate_id,evidence_id,role) "
-            "VALUES(?,?,'match')",
+            "INSERT INTO candidate_evidence(candidate_id,evidence_id,role) VALUES(?,?,'match')",
             (candidate_db_id, evidence_id),
         )
         connection.execute(
@@ -93,9 +90,7 @@ def _fixture(tmp_path):
             "VALUES('inventory',?,?,'{}','completed',1,0,0,0,?,?)",
             (capture_id, tool_run_id, _now(), _now()),
         )
-        inventory_run_id = int(
-            connection.execute("SELECT last_insert_rowid()").fetchone()[0]
-        )
+        inventory_run_id = int(connection.execute("SELECT last_insert_rowid()").fetchone()[0])
         connection.execute(
             "INSERT INTO protocol_observation "
             "(observation_id,capture_id,protocol_label,frame_count,first_frame,last_frame,"
@@ -133,9 +128,7 @@ def test_queue_rebuild_is_idempotent_and_preserves_manual_state(tmp_path) -> Non
         review = connection.execute(
             "SELECT state FROM review_mark WHERE subject_id='artifact'"
         ).fetchone()[0]
-        note = connection.execute(
-            "SELECT body FROM note WHERE subject_id='artifact'"
-        ).fetchone()[0]
+        note = connection.execute("SELECT body FROM note WHERE subject_id='artifact'").fetchone()[0]
         artifact_state = connection.execute(
             "SELECT review_state FROM artifact WHERE artifact_id='artifact'"
         ).fetchone()[0]
@@ -168,6 +161,27 @@ def test_queue_filters_pagination_and_auxiliary_budgets(tmp_path) -> None:
     assert findings.total == 1
 
 
+def test_queue_hides_stale_open_tasks_but_preserves_review_history(tmp_path) -> None:
+    root, database, _ = _fixture(tmp_path)
+    rebuild_manual_queue(root)
+    page = query_manual_queue(root)
+    candidate_task = next(item for item in page.items if item["subject_kind"] == "candidate")
+    finding_task = next(item for item in page.items if item["subject_kind"] == "finding")
+    update_manual_task_state(root, finding_task["task_id"], "resolved")
+    with database.connect() as connection:
+        connection.execute("DELETE FROM candidate_evidence")
+        connection.execute("DELETE FROM finding_evidence")
+
+    rebuild_manual_queue(root)
+
+    assert query_manual_queue(root, subject_id=candidate_task["subject_id"]).total == 0
+    history = query_manual_queue(root, subject_id=finding_task["subject_id"])
+    assert history.total == 1
+    assert history.items[0]["state"] == "resolved"
+    assert history.items[0]["suggested_priority"] == 0
+    assert history.items[0]["signals"] == []
+
+
 def test_summary_query_is_independently_paginated(tmp_path) -> None:
     root, _, _ = _fixture(tmp_path)
     page = query_summary(
@@ -189,3 +203,115 @@ def test_queue_budget_is_explicit(tmp_path) -> None:
     assert summary.status == "budget-limited"
     assert summary.tasks == 1
     assert summary.skipped >= 3
+
+
+def test_queue_gives_voip_specific_next_steps(tmp_path) -> None:
+    root, database, _ = _fixture(tmp_path)
+    with database.connect() as connection:
+        capture_id = int(connection.execute("SELECT id FROM capture").fetchone()[0])
+        inventory_id = int(connection.execute("SELECT id FROM capture_inventory_run").fetchone()[0])
+        connection.execute(
+            "INSERT INTO protocol_observation "
+            "(observation_id,capture_id,protocol_label,frame_count,first_frame,last_frame,"
+            "inventory_run_id,updated_at) VALUES('rtp-observation',?,'rtp',500,2,900,?,?)",
+            (capture_id, inventory_id, _now()),
+        )
+        connection.execute(
+            "INSERT INTO analysis_coverage "
+            "(coverage_id,capture_id,subject_kind,subject_id,status,detail_json,updated_at) "
+            "VALUES('rtp-coverage',?,'protocol','rtp-observation','unavailable','{}',?)",
+            (capture_id, _now()),
+        )
+
+    rebuild_manual_queue(root)
+    page = query_manual_queue(root, subject_id="rtp-observation")
+
+    assert page.total == 1
+    assert page.items[0]["suggested_priority"] == 75
+    assert page.items[0]["signals"][0]["rule_name"] == "voip-rtp-audio"
+    detail = page.items[0]["signals"][0]["detail_json"]
+    assert "voip-extract" in detail and "modem tones" in detail
+
+
+def test_queue_gives_snmp_sensitive_value_next_steps(tmp_path) -> None:
+    root, database, _ = _fixture(tmp_path)
+    with database.connect() as connection:
+        capture_id = int(connection.execute("SELECT id FROM capture").fetchone()[0])
+        inventory_id = int(connection.execute("SELECT id FROM capture_inventory_run").fetchone()[0])
+        connection.execute(
+            "INSERT INTO protocol_observation "
+            "(observation_id,capture_id,protocol_label,frame_count,first_frame,last_frame,"
+            "inventory_run_id,updated_at) VALUES('snmp-observation',?,'snmp',192,2,900,?,?)",
+            (capture_id, inventory_id, _now()),
+        )
+        connection.execute(
+            "INSERT INTO analysis_coverage "
+            "(coverage_id,capture_id,subject_kind,subject_id,status,detail_json,updated_at) "
+            "VALUES('snmp-coverage',?,'protocol','snmp-observation','unavailable','{}',?)",
+            (capture_id, _now()),
+        )
+
+    rebuild_manual_queue(root)
+    page = query_manual_queue(root, subject_id="snmp-observation")
+
+    assert page.total == 1
+    assert page.items[0]["suggested_priority"] == 65
+    assert page.items[0]["signals"][0]["rule_name"] == "snmp-sensitive-values"
+    detail = page.items[0]["signals"][0]["detail_json"]
+    assert "OctetString" in detail and "community" in detail
+
+
+def test_queue_gives_icmp_side_channel_next_steps(tmp_path) -> None:
+    root, database, _ = _fixture(tmp_path)
+    with database.connect() as connection:
+        capture_id = int(connection.execute("SELECT id FROM capture").fetchone()[0])
+        inventory_id = int(connection.execute("SELECT id FROM capture_inventory_run").fetchone()[0])
+        connection.execute(
+            "INSERT INTO protocol_observation "
+            "(observation_id,capture_id,protocol_label,frame_count,first_frame,last_frame,"
+            "inventory_run_id,updated_at) VALUES('icmp-observation',?,'icmp',22,2,22,?,?)",
+            (capture_id, inventory_id, _now()),
+        )
+        connection.execute(
+            "INSERT INTO analysis_coverage "
+            "(coverage_id,capture_id,subject_kind,subject_id,status,detail_json,updated_at) "
+            "VALUES('icmp-coverage',?,'protocol','icmp-observation','unavailable','{}',?)",
+            (capture_id, _now()),
+        )
+
+    rebuild_manual_queue(root)
+    page = query_manual_queue(root, subject_id="icmp-observation")
+
+    assert page.total == 1
+    assert page.items[0]["suggested_priority"] == 55
+    assert page.items[0]["signals"][0]["rule_name"] == "icmp-side-channel-review"
+    detail = page.items[0]["signals"][0]["detail_json"]
+    assert "icmp-triage" in detail and "TTL" in detail
+
+
+def test_queue_gives_tls_decryption_boundary_next_steps(tmp_path) -> None:
+    root, database, _ = _fixture(tmp_path)
+    with database.connect() as connection:
+        capture_id = int(connection.execute("SELECT id FROM capture").fetchone()[0])
+        inventory_id = int(connection.execute("SELECT id FROM capture_inventory_run").fetchone()[0])
+        connection.execute(
+            "INSERT INTO protocol_observation "
+            "(observation_id,capture_id,protocol_label,frame_count,first_frame,last_frame,"
+            "inventory_run_id,updated_at) VALUES('tls-observation',?,'tls',120,2,900,?,?)",
+            (capture_id, inventory_id, _now()),
+        )
+        connection.execute(
+            "INSERT INTO analysis_coverage "
+            "(coverage_id,capture_id,subject_kind,subject_id,status,detail_json,updated_at) "
+            "VALUES('tls-coverage',?,'protocol','tls-observation','unavailable','{}',?)",
+            (capture_id, _now()),
+        )
+
+    rebuild_manual_queue(root)
+    page = query_manual_queue(root, subject_id="tls-observation")
+
+    assert page.total == 1
+    assert page.items[0]["suggested_priority"] == 55
+    assert page.items[0]["signals"][0]["rule_name"] == "tls-encrypted-traffic"
+    detail = page.items[0]["signals"][0]["detail_json"]
+    assert "RSA private key" in detail and "TLS 1.3" in detail

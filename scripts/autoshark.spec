@@ -8,6 +8,9 @@ from pathlib import Path
 from PyInstaller.utils.hooks import collect_submodules
 
 ROOT = Path(SPECPATH).parent
+CWD_ADAPTER_DATA = [
+    (str(ROOT / "src" / "auto_shark" / "assets" / "cwd_adapter.py"), "auto_shark/assets"),
+]
 
 hiddenimports = collect_submodules("auto_shark") + [
     "auto_shark.assets.cwd_adapter",
@@ -28,7 +31,7 @@ cli = Analysis(
     [str(ROOT / "scripts" / "launcher_cli.py")],
     pathex=[str(ROOT / "src")],
     binaries=[],
-    datas=[],
+    datas=CWD_ADAPTER_DATA,
     hiddenimports=hiddenimports,
     hookspath=[],
     runtime_hooks=[],

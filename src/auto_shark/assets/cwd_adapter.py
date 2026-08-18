@@ -23,6 +23,7 @@ timeout.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -46,9 +47,20 @@ def main(argv: list[str]) -> int:
     if timeout <= 0:
         print("error: timeout must be positive", file=sys.stderr)
         return 2
+    def absolutize(argument: str) -> str:
+        # Inner tools run with the output directory as their working
+        # directory; relative paths must be resolved against OUR cwd first
+        # (the remote runner addresses job files relative to the login home).
+        looks_like_path = (
+            argument.startswith(".") or "/" in argument or "\\" in argument
+        )
+        if looks_like_path and not os.path.isabs(argument) and os.path.exists(argument):
+            return os.path.abspath(argument)
+        return argument
+
     executable = argv[2]
-    inner_arguments = argv[3:-1]
-    output_directory = Path(argv[-1])
+    inner_arguments = [absolutize(item) for item in argv[3:-1]]
+    output_directory = Path(absolutize(argv[-1]))
     output_directory.mkdir(parents=True, exist_ok=True)
     try:
         with (output_directory / "stdout.txt").open("wb") as stdout_stream, (

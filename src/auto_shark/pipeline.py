@@ -142,7 +142,8 @@ def _store_candidate(
     value = match.value.decode("utf-8", errors="replace")
     normalized = value.strip()
     public_id = candidate_id("flag", normalized)
-    confidence = 0.99 if normalized.lower().startswith("flag{") else 0.90
+    lowered = normalized.lower()
+    confidence = 0.99 if lowered.startswith("flag{") or lowered.startswith("{flag:") else 0.90
     with database.connect() as connection:
         parent = connection.execute(
             "SELECT capture_id, protocol_message_id, frame_start, frame_end, blob_id "

@@ -75,20 +75,188 @@ def _safe_blob_path(root: Path, relative_path: str) -> Optional[Path]:
     return path
 
 
+def _esc(value: object) -> str:
+    return html.escape("" if value is None else str(value), quote=True)
+
+
+_CSS = (
+    "body{font:14px system-ui,sans-serif;margin:2rem auto;max-width:1100px;"
+    "color:#202124;background:#fff;padding:0 1rem;}"
+    "h1{font-size:1.5rem;}h2{font-size:1.15rem;margin-top:2rem;"
+    "border-bottom:2px solid #1a73e8;padding-bottom:.2rem;}"
+    "table{border-collapse:collapse;width:100%;margin:.5rem 0 1rem;}"
+    "th,td{border:1px solid #d8dadd;padding:.35rem .6rem;text-align:left;"
+    "vertical-align:top;word-break:break-all;}"
+    "th{background:#f1f3f4;}tr:nth-child(even) td{background:#fafbfc;}"
+    "ul{margin:.3rem 0 1rem;}.muted{color:#5f6368;}"
+    "pre{white-space:pre-wrap;background:#f5f6f7;padding:1rem;"
+    "border:1px solid #d8dadd;}details{margin-top:2rem;}"
+)
+
+
+def _table(headers: tuple, rows) -> str:
+    if not rows:
+        return "<p class='muted'>(none)</p>"
+    parts = [
+        "<table>",
+        "<tr>" + "".join(f"<th>{_esc(header)}</th>" for header in headers) + "</tr>",
+    ]
+    for row in rows:
+        parts.append("<tr>" + "".join(f"<td>{_esc(cell)}</td>" for cell in row) + "</tr>")
+    parts.append("</table>")
+    return "".join(parts)
+
+
 def _html_report(report_json: str) -> bytes:
-    escaped = html.escape(report_json, quote=False)
-    document = (
-        "<!doctype html>\n"
-        '<html lang="en"><head><meta charset="utf-8">'
-        "<title>Auto-Shark report</title>"
-        "<style>body{font:14px system-ui,sans-serif;margin:2rem;color:#202124;}"
-        "pre{white-space:pre-wrap;background:#f5f6f7;padding:1rem;border:1px solid #d8dadd;}"
-        "h1{font-size:1.35rem;}</style></head><body>"
-        "<h1>Auto-Shark offline report</h1>"
-        f"<pre>{escaped}</pre>"
-        "</body></html>\n"
+    payload = json.loads(report_json)
+    capture = payload.get("capture", {})
+    parts = [
+        "<!doctype html>\n",
+        '<html lang="en"><head><meta charset="utf-8">',
+        "<title>Auto-Shark report</title>",
+        f"<style>{_CSS}</style></head><body>",
+        "<h1>Auto-Shark offline report</h1>",
+        "<p class='muted'>Self-contained evidence report: no network resources, no "
+        "scripts. The machine-readable JSON is embedded at the bottom.</p>",
+        "<h2>Capture</h2>",
+        _table(
+            ("Field", "Value"),
+            [
+                ("Source", capture.get("source_name")),
+                ("Size (bytes)", capture.get("byte_length")),
+                ("SHA-256", capture.get("sha256")),
+                ("Database schema", capture.get("database_schema")),
+            ],
+        ),
+    ]
+
+    def collection_rows(name: str, row_fn) -> list:
+        collection = payload.get(name) or {}
+        return [row_fn(item) for item in (collection.get("items") or [])]
+
+    assessment = payload.get("assessment") or {}
+    behaviors = assessment.get("behaviors") or []
+    focus = assessment.get("suggested_focus") or []
+    if behaviors or focus:
+        parts.append("<h2>Assessment</h2>")
+        parts.append(
+            _table(
+                ("Detected behavior", "Source detector", "Count", "Suggested next step"),
+                [
+                    (
+                        behavior.get("kind"),
+                        behavior.get("source"),
+                        behavior.get("count"),
+                        behavior.get("hint"),
+                    )
+                    for behavior in behaviors
+                ],
+            )
+        )
+        if focus:
+            parts.append("<ul>" + "".join(f"<li>{_esc(line)}</li>" for line in focus) + "</ul>")
+
+    parts.append("<h2>Flag candidates</h2>")
+    parts.append(
+        _table(
+            ("Rank", "Kind", "Value", "Confidence"),
+            collection_rows(
+                "candidates",
+                lambda item: (
+                    item.get("rank_score"),
+                    item.get("kind"),
+                    item.get("normalized_value"),
+                    item.get("confidence"),
+                ),
+            ),
+        )
     )
-    return document.encode("utf-8")
+    parts.append("<h2>Findings</h2>")
+    parts.append(
+        _table(
+            ("Severity", "Detector", "Title", "Recommended action"),
+            collection_rows(
+                "findings",
+                lambda item: (
+                    item.get("severity"),
+                    item.get("detector"),
+                    item.get("title"),
+                    item.get("recommended_action"),
+                ),
+            ),
+        )
+    )
+    parts.append("<h2>WebShell timeline events</h2>")
+    parts.append(
+        _table(
+            ("Request frame", "Kind", "Target", "Status"),
+            collection_rows(
+                "events",
+                lambda item: (
+                    item.get("request_frame"),
+                    item.get("event_kind"),
+                    item.get("target"),
+                    item.get("status"),
+                ),
+            ),
+        )
+    )
+    parts.append("<h2>Artifacts</h2>")
+    parts.append(
+        _table(
+            ("Name", "Detected type", "Review state"),
+            collection_rows(
+                "artifacts",
+                lambda item: (
+                    item.get("suggested_name"),
+                    item.get("detected_media_type"),
+                    item.get("review_state"),
+                ),
+            ),
+        )
+    )
+    parts.append("<h2>Manual review queue</h2>")
+    parts.append(
+        _table(
+            ("Priority", "State", "Kind", "Subject"),
+            collection_rows(
+                "manual_tasks",
+                lambda item: (
+                    item.get("suggested_priority"),
+                    item.get("state"),
+                    item.get("task_kind"),
+                    f"{item.get('subject_kind')}:{item.get('subject_id')}",
+                ),
+            ),
+        )
+    )
+    protocols = payload.get("protocols") or {}
+    parts.append("<h2>Protocols</h2>")
+    parts.append(
+        _table(
+            ("Protocol", "Frames", "First frame", "Last frame"),
+            [
+                (
+                    item.get("protocol_label"),
+                    item.get("frame_count"),
+                    item.get("first_frame"),
+                    item.get("last_frame"),
+                )
+                for item in (protocols.get("items") or [])
+            ],
+        )
+    )
+    conversations = payload.get("conversations") or {}
+    parts.append(
+        f"<p class='muted'>Conversations total: {_esc(conversations.get('total'))}</p>"
+    )
+    parts.append(
+        "<details><summary>Full machine-readable report JSON</summary><pre>"
+        + html.escape(report_json, quote=False)
+        + "</pre></details>"
+    )
+    parts.append("</body></html>\n")
+    return "".join(parts).encode("utf-8")
 
 
 def _evidence_bytes(

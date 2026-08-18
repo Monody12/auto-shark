@@ -4,7 +4,7 @@ import pytest
 
 from auto_shark.engines.stream import StreamProcessResult
 from auto_shark.engines.tshark import TsharkCapabilities
-from auto_shark.ftp import _suggested_name, index_ftp, index_ftp_metadata
+from auto_shark.ftp import _magic, _suggested_name, index_ftp, index_ftp_metadata
 from auto_shark.project import create_project
 from auto_shark.protocols.ftp import FTP_REQUIRED_FIELDS, selected_ftp_fields
 from auto_shark.storage import BlobStore, Database
@@ -225,6 +225,18 @@ def test_ftp_suggested_name_removes_paths_and_controls() -> None:
     assert _suggested_name("../dir\\flag.rar") == "flag.rar"
     assert _suggested_name("bad\x00name.rar") == "bad_name.rar"
     assert _suggested_name("../") is None
+
+
+def test_ftp_magic_recognizes_common_transferred_files(tmp_path) -> None:
+    samples = {
+        "sample.zip": (b"PK\x03\x04rest", "application/zip", "zip"),
+        "sample.png": (b"\x89PNG\r\n\x1a\n", "image/png", "png"),
+        "sample.pdf": (b"%PDF-1.7", "application/pdf", "pdf"),
+    }
+    for name, (content, media_type, description) in samples.items():
+        path = tmp_path / name
+        path.write_bytes(content)
+        assert _magic(path) == (media_type, description)
 
 
 def _record_reconstruction(root: Path, *, partial_coverage: bool = False) -> None:

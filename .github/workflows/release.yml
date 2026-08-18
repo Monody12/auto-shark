@@ -1,0 +1,54 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  windows-release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.11"
+          enable-cache: true
+      - name: Install Python build dependencies
+        run: uv sync --all-groups --extra gui
+      - name: Install Inno Setup
+        run: choco install -y --no-progress innosetup
+      - name: Verify version matches tag
+        shell: pwsh
+        run: |
+          $version = (uv version --short).Trim()
+          if ("v$version" -ne "${{ github.ref_name }}") {
+            throw "Tag ${{ github.ref_name }} does not match project version $version."
+          }
+      - name: Test
+        env:
+          AUTO_SHARK_TSHARK: C:\Program Files\Wireshark\tshark.exe
+        run: |
+          choco install -y --no-progress wireshark
+          uv run ruff check .
+          uv run pytest -q
+      - name: Build installer, portable package, wheel, and sdist
+        shell: pwsh
+        run: |
+          ./scripts/build_windows_release.ps1 `
+            -OutputDirectory "${{ runner.temp }}\release" `
+            -WorkDirectory "${{ runner.temp }}\build" `
+            -RequireInstaller
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            ${{ runner.temp }}\release\AutoShark-Windows-x64-Setup.exe
+            ${{ runner.temp }}\release\AutoShark-Windows-x64-Portable.zip
+            ${{ runner.temp }}\release\auto_shark-*.whl
+            ${{ runner.temp }}\release\auto_shark-*.tar.gz
+            ${{ runner.temp }}\release\SHA256SUMS

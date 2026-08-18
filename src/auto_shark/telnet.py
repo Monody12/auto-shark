@@ -26,7 +26,7 @@ from .protocols.telnet import (
 from .storage import Database
 from .tcp import TcpReconstructionSummary, reconstruct_tcp_stream
 
-PARSER_VERSION = 1
+PARSER_VERSION = 2
 PARSER_CHUNK_BYTES = 64 * 1024
 
 
@@ -264,12 +264,14 @@ class _RecordBuilder:
         self._data.clear()
 
     def _append_byte(self, offset: int, value: int) -> None:
+        if self._data.endswith(b"\r"):
+            if value in (0, 10):
+                self._data.append(value)
+                self._emit_application("line")
+                return
+            self._emit_application("line")
         if self._start is None:
             self._start = offset
-        if value == 0 and self._data.endswith(b"\r"):
-            self._data.append(value)
-            self._emit_application("line")
-            return
         if value < 32 and value not in (10, 13):
             self._emit_application()
             self._start = offset
@@ -277,7 +279,7 @@ class _RecordBuilder:
             self._emit_application("control")
             return
         self._data.append(value)
-        if value == 10 or (len(self._data) >= 2 and self._data[-2:] == b"\r\x00"):
+        if value == 10:
             self._emit_application("line")
         elif len(self._data) >= self.max_record_bytes:
             self._emit_application("bounded")
@@ -304,7 +306,7 @@ class _RecordBuilder:
             self._emit_application("prompt")
 
     def finish(self) -> tuple[_StoredRecord, ...]:
-        self._emit_application()
+        self._emit_application("line" if self._data.endswith(b"\r") else None)
         result = tuple(self._records)
         self._records.clear()
         return result

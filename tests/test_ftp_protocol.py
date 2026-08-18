@@ -74,6 +74,17 @@ def test_parse_ftp_response_uses_ipv6_fallback() -> None:
     assert packet.passive_port == 14438
 
 
+def test_parse_ftp_multiline_response_continuation_without_code() -> None:
+    values = _base()
+    values["ftp.response.arg"] = " PASV"
+
+    packet = parse_ftp_line(_row(values))
+
+    assert packet.kind == "response"
+    assert packet.response_code is None
+    assert packet.response_argument == " PASV"
+
+
 def test_parse_ftp_rejects_wrong_columns_and_untyped_row() -> None:
     with pytest.raises(ValueError, match="columns"):
         parse_ftp_line(b'"1"\t"2"')

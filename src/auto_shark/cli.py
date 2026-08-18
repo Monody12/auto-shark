@@ -14,10 +14,13 @@ from .analysis import analyze_http
 from .body import extract_http_body
 from .config import Settings
 from .detectors import detect_project
+from .dns import triage_dns_tunnels
 from .engines.tshark import find_tshark, probe_tshark
 from .exporting import ExportLimits, export_bundle
 from .files.carve import carve_project
 from .ftp import index_ftp
+from .icmp import triage_icmp
+from .image_analysis import analyze_project_images
 from .inventory import index_summary
 from .investigation import add_note, query_notes, set_review_mark, update_note
 from .m4_queries import query_findings, query_timeline
@@ -38,12 +41,18 @@ from .remote import (
     find_ssh_tools,
     probe_remote_node,
     run_remote_job,
+    setup_remote_adapter,
 )
 from .reporting import ReportLimits, collect_report
 from .tcp import reconstruct_tcp_stream
+from .tcp_text import triage_tcp_text
+from .tcp_urgent import triage_tcp_urgent
 from .telnet import index_telnet
+from .tftp import extract_tftp_transfers
 from .triage import triage_project
+from .usb_hid import triage_usb_hid
 from .version import __version__
+from .voip import extract_voip_audio
 from .workflow import analyze_with_bodies
 
 
@@ -139,6 +148,16 @@ def _parser() -> argparse.ArgumentParser:
     reconstruct.add_argument("--max-direction-bytes", type=int, default=256 * 1024 * 1024)
     reconstruct.add_argument("--max-total-bytes", type=int, default=512 * 1024 * 1024)
 
+    tcp_text = commands.add_parser(
+        "tcp-text", help="reconstruct and triage bounded generic TCP data streams"
+    )
+    tcp_text.add_argument("project", type=Path)
+    tcp_text.add_argument("--tshark", type=Path, help="explicit path to tshark executable")
+    tcp_text.add_argument("--max-streams", type=int, default=32)
+    tcp_text.add_argument("--max-segments-per-stream", type=int, default=100_000)
+    tcp_text.add_argument("--max-stream-bytes", type=int, default=16 * 1024 * 1024)
+    tcp_text.add_argument("--max-total-bytes", type=int, default=64 * 1024 * 1024)
+
     transactions = commands.add_parser("transactions", help="query indexed HTTP transactions")
     transactions.add_argument("project", type=Path)
     transactions.add_argument("--uri", help="filter by exact request URI")
@@ -176,6 +195,8 @@ def _parser() -> argparse.ArgumentParser:
     detect.add_argument("--max-preview-bytes", type=int, default=256)
     detect.add_argument("--max-webshell-fields", type=int, default=100_000)
     detect.add_argument("--max-webshell-value-bytes", type=int, default=64 * 1024)
+    detect.add_argument("--max-ognl-fields", type=int, default=100_000)
+    detect.add_argument("--max-ognl-body-bytes", type=int, default=1024 * 1024)
 
     ftp = commands.add_parser("index-ftp", help="correlate and export bounded FTP transfers")
     ftp.add_argument("project", type=Path)
@@ -185,6 +206,17 @@ def _parser() -> argparse.ArgumentParser:
     ftp.add_argument("--max-index-bytes", type=int, default=512 * 1024 * 1024)
     ftp.add_argument("--max-transfer-bytes", type=int, default=256 * 1024 * 1024)
     ftp.add_argument("--max-total-bytes", type=int, default=512 * 1024 * 1024)
+
+    tftp = commands.add_parser(
+        "tftp-extract", help="reconstruct bounded TFTP uploads and downloads"
+    )
+    tftp.add_argument("project", type=Path)
+    tftp.add_argument("--tshark", type=Path, help="explicit path to tshark executable")
+    tftp.add_argument("--max-discovery-packets", type=int, default=100_000)
+    tftp.add_argument("--max-data-packets", type=int, default=500_000)
+    tftp.add_argument("--max-transfers", type=int, default=256)
+    tftp.add_argument("--max-transfer-bytes", type=int, default=64 * 1024 * 1024)
+    tftp.add_argument("--max-total-bytes", type=int, default=256 * 1024 * 1024)
 
     telnet = commands.add_parser("index-telnet", help="index bounded directional Telnet dialogues")
     telnet.add_argument("project", type=Path)
@@ -226,6 +258,52 @@ def _parser() -> argparse.ArgumentParser:
     inventory.add_argument("--max-evidence-links", type=int, default=100_000)
     inventory.add_argument("--max-unsupported-tasks", type=int, default=25)
 
+    voip = commands.add_parser(
+        "voip-extract", help="reconstruct bounded G.711 RTP streams as WAV artifacts"
+    )
+    voip.add_argument("project", type=Path)
+    voip.add_argument("--tshark", type=Path, help="explicit path to tshark executable")
+    voip.add_argument("--max-packets", type=int, default=100_000)
+    voip.add_argument("--max-streams", type=int, default=128)
+    voip.add_argument("--max-payload-bytes", type=int, default=64 * 1024 * 1024)
+
+    dns = commands.add_parser(
+        "dns-triage", help="triage encoded DNS labels and recover validated files"
+    )
+    dns.add_argument("project", type=Path)
+    dns.add_argument("--tshark", type=Path, help="explicit path to tshark executable")
+    dns.add_argument("--max-queries", type=int, default=100_000)
+    dns.add_argument("--max-groups", type=int, default=256)
+    dns.add_argument("--max-decoded-bytes", type=int, default=64 * 1024 * 1024)
+    dns.add_argument("--max-preview-bytes", type=int, default=4096)
+    dns.add_argument("--max-stream-bytes", type=int, default=16 * 1024 * 1024)
+    dns.add_argument("--max-artifact-bytes", type=int, default=16 * 1024 * 1024)
+
+    icmp = commands.add_parser(
+        "icmp-triage", help="detect printable TTL echo oracles and ICMP side channels"
+    )
+    icmp.add_argument("project", type=Path)
+    icmp.add_argument("--tshark", type=Path, help="explicit path to tshark executable")
+    icmp.add_argument("--max-packets", type=int, default=100_000)
+    icmp.add_argument("--max-routes", type=int, default=256)
+    icmp.add_argument("--max-preview-attempts", type=int, default=256)
+
+    urgent = commands.add_parser(
+        "tcp-urgent", help="detect printable data concealed in TCP urgent pointers"
+    )
+    urgent.add_argument("project", type=Path)
+    urgent.add_argument("--tshark", type=Path, help="explicit path to tshark executable")
+    urgent.add_argument("--max-frames", type=int, default=100_000)
+    urgent.add_argument("--max-groups", type=int, default=256)
+
+    usb_hid = commands.add_parser(
+        "usb-hid", help="triage USB keyboard and absolute-pointer report series"
+    )
+    usb_hid.add_argument("project", type=Path)
+    usb_hid.add_argument("--tshark", type=Path, help="explicit path to tshark executable")
+    usb_hid.add_argument("--max-reports", type=int, default=100_000)
+    usb_hid.add_argument("--max-endpoints", type=int, default=256)
+
     summary = commands.add_parser("summary", help="query bounded capture summaries")
     summary.add_argument("project", type=Path)
     summary.add_argument("--protocol-offset", type=int, default=0)
@@ -259,8 +337,9 @@ def _parser() -> argparse.ArgumentParser:
     findings.add_argument("--max-evidence-links", type=int, default=10_000)
     findings.add_argument("--max-detail-bytes", type=int, default=4096)
 
-    timeline = commands.add_parser("timeline", help="query the static WebShell timeline")
+    timeline = commands.add_parser("timeline", help="query a detector behavior timeline")
     timeline.add_argument("project", type=Path)
+    timeline.add_argument("--detector", default="static-webshell-activity")
     timeline.add_argument("--event-kind")
     timeline.add_argument("--status")
     timeline.add_argument("--frame-start", type=int)
@@ -332,9 +411,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     plugin_probe.add_argument("manifest", type=Path)
 
-    plugin_run = commands.add_parser(
-        "plugin-run", help="run one declared analyzer on one artifact"
-    )
+    plugin_run = commands.add_parser("plugin-run", help="run one declared analyzer on one artifact")
     plugin_run.add_argument("project", type=Path)
     plugin_run.add_argument("manifest", type=Path)
     plugin_run.add_argument("--artifact", required=True)
@@ -350,9 +427,7 @@ def _parser() -> argparse.ArgumentParser:
     remote_probe.add_argument("--sftp", type=Path)
     remote_probe.add_argument("--connect-timeout", type=int, default=15)
 
-    remote_run = commands.add_parser(
-        "remote-run", help="run one declared analyzer on a Linux node"
-    )
+    remote_run = commands.add_parser("remote-run", help="run one declared analyzer on a Linux node")
     remote_run.add_argument("project", type=Path)
     remote_run.add_argument("manifest", type=Path)
     remote_run.add_argument("--artifact", required=True)
@@ -360,6 +435,26 @@ def _parser() -> argparse.ArgumentParser:
     remote_run.add_argument("--ssh", type=Path)
     remote_run.add_argument("--sftp", type=Path)
     remote_run.add_argument("--remote-root", default=".auto-shark-jobs")
+
+    remote_setup = commands.add_parser(
+        "remote-setup", help="upload the cwd adapter to a Linux node once"
+    )
+    remote_setup.add_argument("--host", required=True)
+    remote_setup.add_argument("--ssh", type=Path)
+    remote_setup.add_argument("--sftp", type=Path)
+    remote_setup.add_argument("--remote-root", default=".auto-shark-jobs")
+
+    image_analyze = commands.add_parser(
+        "image-analyze", help="run a declared image analyzer over image artifacts"
+    )
+    image_analyze.add_argument("project", type=Path)
+    image_analyze.add_argument("manifest", type=Path)
+    image_analyze.add_argument("--max-artifacts", type=int, default=32)
+    image_analyze.add_argument("--remote", action="store_true", help="run on the Linux node")
+    image_analyze.add_argument("--host")
+    image_analyze.add_argument("--ssh", type=Path)
+    image_analyze.add_argument("--sftp", type=Path)
+    image_analyze.add_argument("--remote-root", default=".auto-shark-jobs")
 
     probe = commands.add_parser("probe", help="probe TShark capabilities")
     probe.add_argument("--tshark", type=Path, help="explicit path to tshark executable")
@@ -454,6 +549,37 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 )
             )
             return 0
+        if args.command == "remote-setup":
+            ssh, sftp = find_ssh_tools(args.ssh, args.sftp)
+            if ssh is None or sftp is None:
+                print("error: ssh and sftp clients are required", file=sys.stderr)
+                return 2
+            result = setup_remote_adapter(
+                RemoteNodeConfig(
+                    host=args.host,
+                    ssh_executable=ssh,
+                    sftp_executable=sftp,
+                    remote_root=args.remote_root,
+                )
+            )
+            print(json.dumps(result, ensure_ascii=False, sort_keys=True, indent=2))
+            return 0 if result["ok"] else 2
+        if args.command == "image-analyze":
+            if args.remote and not args.host:
+                raise ValueError("--remote requires --host")
+            print(
+                analyze_project_images(
+                    args.project,
+                    args.manifest,
+                    remote_host=args.host if args.remote else None,
+                    ssh_executable=args.ssh,
+                    sftp_executable=args.sftp,
+                    remote_root=args.remote_root,
+                    max_artifacts=args.max_artifacts,
+                ).to_json(),
+                end="",
+            )
+            return 0
         if args.command == "gui":
             from .gui import run_gui
 
@@ -480,9 +606,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if args.command == "review-mark":
             print(
                 json.dumps(
-                    set_review_mark(
-                        args.project, args.subject_kind, args.subject_id, args.state
-                    ),
+                    set_review_mark(args.project, args.subject_kind, args.subject_id, args.state),
                     ensure_ascii=False,
                     sort_keys=True,
                     indent=2,
@@ -585,6 +709,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print(
                 query_timeline(
                     args.project,
+                    detector=args.detector,
                     event_kind=args.event_kind,
                     status=args.status,
                     frame_start=args.frame_start,
@@ -632,6 +757,102 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     max_unsupported_tasks=args.max_unsupported_tasks,
                 ).to_json()
             )
+            return 0
+        if args.command == "voip-extract":
+            settings = Settings.from_environment()
+            executable = find_tshark(args.tshark or settings.tshark_path)
+            if executable is None:
+                print(
+                    "TShark was not found. Use --tshark or AUTO_SHARK_TSHARK.",
+                    file=sys.stderr,
+                )
+                return 2
+            summary = extract_voip_audio(
+                args.project,
+                executable,
+                max_packets=args.max_packets,
+                max_streams=args.max_streams,
+                max_payload_bytes=args.max_payload_bytes,
+            )
+            rebuild_manual_queue(args.project)
+            print(summary.to_json(), end="")
+            return 0
+        if args.command == "dns-triage":
+            settings = Settings.from_environment()
+            executable = find_tshark(args.tshark or settings.tshark_path)
+            if executable is None:
+                print(
+                    "TShark was not found. Use --tshark or AUTO_SHARK_TSHARK.",
+                    file=sys.stderr,
+                )
+                return 2
+            summary = triage_dns_tunnels(
+                args.project,
+                executable,
+                max_queries=args.max_queries,
+                max_groups=args.max_groups,
+                max_decoded_bytes=args.max_decoded_bytes,
+                max_preview_bytes=args.max_preview_bytes,
+                max_stream_bytes=args.max_stream_bytes,
+                max_artifact_bytes=args.max_artifact_bytes,
+            )
+            rebuild_manual_queue(args.project)
+            print(summary.to_json(), end="")
+            return 0
+        if args.command == "icmp-triage":
+            settings = Settings.from_environment()
+            executable = find_tshark(args.tshark or settings.tshark_path)
+            if executable is None:
+                print(
+                    "TShark was not found. Use --tshark or AUTO_SHARK_TSHARK.",
+                    file=sys.stderr,
+                )
+                return 2
+            summary = triage_icmp(
+                args.project,
+                executable,
+                max_packets=args.max_packets,
+                max_routes=args.max_routes,
+                max_preview_attempts=args.max_preview_attempts,
+            )
+            rebuild_manual_queue(args.project)
+            print(summary.to_json(), end="")
+            return 0
+        if args.command == "tcp-urgent":
+            settings = Settings.from_environment()
+            executable = find_tshark(args.tshark or settings.tshark_path)
+            if executable is None:
+                print(
+                    "TShark was not found. Use --tshark or AUTO_SHARK_TSHARK.",
+                    file=sys.stderr,
+                )
+                return 2
+            summary = triage_tcp_urgent(
+                args.project,
+                executable,
+                max_frames=args.max_frames,
+                max_groups=args.max_groups,
+            )
+            rebuild_manual_queue(args.project)
+            print(summary.to_json(), end="")
+            return 0
+        if args.command == "usb-hid":
+            settings = Settings.from_environment()
+            executable = find_tshark(args.tshark or settings.tshark_path)
+            if executable is None:
+                print(
+                    "TShark was not found. Use --tshark or AUTO_SHARK_TSHARK.",
+                    file=sys.stderr,
+                )
+                return 2
+            summary = triage_usb_hid(
+                args.project,
+                executable,
+                max_reports=args.max_reports,
+                max_endpoints=args.max_endpoints,
+            )
+            rebuild_manual_queue(args.project)
+            print(summary.to_json(), end="")
             return 0
         if args.command == "index-telnet":
             settings = Settings.from_environment()
@@ -693,6 +914,27 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 ).to_json()
             )
             return 0
+        if args.command == "tftp-extract":
+            settings = Settings.from_environment()
+            executable = find_tshark(args.tshark or settings.tshark_path)
+            if executable is None:
+                print(
+                    "TShark was not found. Use --tshark or AUTO_SHARK_TSHARK.",
+                    file=sys.stderr,
+                )
+                return 2
+            summary = extract_tftp_transfers(
+                args.project,
+                executable,
+                max_discovery_packets=args.max_discovery_packets,
+                max_data_packets=args.max_data_packets,
+                max_transfers=args.max_transfers,
+                max_transfer_bytes=args.max_transfer_bytes,
+                max_total_bytes=args.max_total_bytes,
+            )
+            rebuild_manual_queue(args.project)
+            print(summary.to_json(), end="")
+            return 0
         if args.command == "triage":
             print(
                 triage_project(
@@ -725,6 +967,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     max_preview_bytes=args.max_preview_bytes,
                     max_webshell_fields=args.max_webshell_fields,
                     max_webshell_value_bytes=args.max_webshell_value_bytes,
+                    max_ognl_fields=args.max_ognl_fields,
+                    max_ognl_body_bytes=args.max_ognl_body_bytes,
                 ).to_json()
             )
             return 0
@@ -759,6 +1003,26 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     max_index_payload_bytes=args.max_index_bytes,
                     max_direction_bytes=args.max_direction_bytes,
                     max_total_output_bytes=args.max_total_bytes,
+                ).to_json()
+            )
+            return 0
+        if args.command == "tcp-text":
+            settings = Settings.from_environment()
+            executable = find_tshark(args.tshark or settings.tshark_path)
+            if executable is None:
+                print(
+                    "TShark was not found. Use --tshark or AUTO_SHARK_TSHARK.",
+                    file=sys.stderr,
+                )
+                return 2
+            print(
+                triage_tcp_text(
+                    args.project,
+                    executable,
+                    max_streams=args.max_streams,
+                    max_segments_per_stream=args.max_segments_per_stream,
+                    max_stream_bytes=args.max_stream_bytes,
+                    max_total_bytes=args.max_total_bytes,
                 ).to_json()
             )
             return 0
@@ -865,7 +1129,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if args.command == "project" and args.project_command == "status":
             _print_project(inspect_project(args.directory))
             return 0
-    except (FileNotFoundError, FileExistsError, ValueError, OSError) as error:
+    except (FileNotFoundError, FileExistsError, ValueError, OSError, RuntimeError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 2
     parser.error("unsupported command")

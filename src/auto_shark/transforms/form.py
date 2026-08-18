@@ -10,6 +10,9 @@ from urllib.parse import unquote_to_bytes
 class FormFieldValue:
     ordinal: int
     name: str
+    raw_name_offset: int
+    raw_name_length: int
+    raw_name: bytes
     raw_offset: int
     raw_length: int
     raw_value: bytes
@@ -41,6 +44,9 @@ def parse_urlencoded_form(data: bytes, *, max_fields: int = 1024) -> list[FormFi
             FormFieldValue(
                 ordinal=ordinal,
                 name=decoded_name,
+                raw_name_offset=cursor,
+                raw_name_length=len(raw_name),
+                raw_name=raw_name,
                 raw_offset=value_offset,
                 raw_length=len(raw_value),
                 raw_value=raw_value,

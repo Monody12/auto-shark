@@ -16,12 +16,15 @@ from typing import Optional
 
 from ..config import Settings
 from ..detectors import detect_project
-from ..engines.tshark import find_tshark
+from ..dns import triage_dns_tunnels
+from ..engines.tshark import find_tshark, probe_tshark
 from ..exporting import ExportLimits, export_bundle
+from ..ftp import index_ftp
+from ..icmp import triage_icmp
 from ..inventory import index_summary
 from ..investigation import add_note, query_notes, set_review_mark, update_note
 from ..m4_queries import query_findings, query_timeline
-from ..manual_queue import update_manual_task_state
+from ..manual_queue import rebuild_manual_queue, update_manual_task_state
 from ..pipeline import scan_project
 from ..project import ProjectInfo, create_project, inspect_project
 from ..queries import (
@@ -29,10 +32,16 @@ from ..queries import (
     query_streams,
     query_summary,
     query_telnet_dialogues,
+    query_transaction_detail,
     query_transactions,
 )
 from ..reporting import collect_report
+from ..tcp_text import triage_tcp_text
+from ..tcp_urgent import triage_tcp_urgent
+from ..tftp import extract_tftp_transfers
 from ..triage import triage_project
+from ..usb_hid import triage_usb_hid
+from ..voip import extract_voip_audio
 from ..workflow import analyze_with_bodies
 
 PAGE_LIMIT = 100
@@ -90,6 +99,9 @@ class ProjectServices:
     def transactions(self, *, uri: Optional[str] = None, offset: int = 0) -> dict:
         return _payload(query_transactions(self.root, uri=uri, offset=offset, limit=PAGE_LIMIT))
 
+    def transaction_detail(self, transaction_id: str) -> dict:
+        return query_transaction_detail(self.root, transaction_id)
+
     def streams(self, *, offset: int = 0) -> dict:
         return _payload(query_streams(self.root, offset=offset, limit=PAGE_LIMIT))
 
@@ -98,9 +110,7 @@ class ProjectServices:
             query_telnet_dialogues(self.root, stream=stream, offset=offset, limit=PAGE_LIMIT)
         )
 
-    def findings(
-        self, *, candidate_offset: int = 0, finding_offset: int = 0
-    ) -> dict:
+    def findings(self, *, candidate_offset: int = 0, finding_offset: int = 0) -> dict:
         return _payload(
             query_findings(
                 self.root,
@@ -221,8 +231,82 @@ class ProjectServices:
                     ),
                 )
             )
+
+        def voip_stage() -> object:
+            protocol_labels = {
+                str(item.get("protocol_label"))
+                for item in _payload(
+                    query_summary(
+                        self.root,
+                        protocol_limit=PAGE_LIMIT,
+                        conversation_limit=1,
+                    )
+                ).get("protocols", [])
+            }
+            if "rtp" not in protocol_labels:
+                return {"status": "not-applicable", "reason": "no RTP protocol observed"}
+            summary = extract_voip_audio(self.root, tshark)
+            rebuild_manual_queue(self.root)
+            return summary
+
+        def ftp_stage() -> object:
+            capabilities = probe_tshark(tshark)
+            if not capabilities.features.get("ftp", False):
+                return {
+                    "status": "unavailable",
+                    "reason": "TShark lacks the required FTP/FTP-DATA fields",
+                }
+            return index_ftp(self.root, tshark, capabilities=capabilities)
+
+        def tftp_stage() -> object:
+            summary = extract_tftp_transfers(self.root, tshark)
+            rebuild_manual_queue(self.root)
+            return summary
+
+        def dns_stage() -> object:
+            protocol_labels = {
+                str(item.get("protocol_label"))
+                for item in _payload(
+                    query_summary(
+                        self.root,
+                        protocol_limit=PAGE_LIMIT,
+                        conversation_limit=1,
+                    )
+                ).get("protocols", [])
+            }
+            if "dns" not in protocol_labels:
+                return {"status": "not-applicable", "reason": "no DNS protocol observed"}
+            summary = triage_dns_tunnels(self.root, tshark)
+            rebuild_manual_queue(self.root)
+            return summary
+
+        def tcp_urgent_stage() -> object:
+            summary = triage_tcp_urgent(self.root, tshark)
+            rebuild_manual_queue(self.root)
+            return summary
+
+        def icmp_stage() -> object:
+            summary = triage_icmp(self.root, tshark)
+            rebuild_manual_queue(self.root)
+            return summary
+
+        def usb_hid_stage() -> object:
+            summary = triage_usb_hid(self.root, tshark)
+            rebuild_manual_queue(self.root)
+            return summary
+
         stages.extend(
             [
+                AnalysisStage(
+                    "ftp",
+                    "Correlate FTP control and data transfers",
+                    ftp_stage,
+                ),
+                AnalysisStage(
+                    "tftp",
+                    "Reconstruct TFTP uploads and downloads",
+                    tftp_stage,
+                ),
                 AnalysisStage(
                     "scan",
                     "Apply transforms and carve static files",
@@ -242,6 +326,36 @@ class ProjectServices:
                     "inventory",
                     "Build capture summary and manual queue",
                     lambda: index_summary(self.root, tshark),
+                ),
+                AnalysisStage(
+                    "tcp-text",
+                    "Reconstruct and inspect generic TCP data streams",
+                    lambda: triage_tcp_text(self.root, tshark),
+                ),
+                AnalysisStage(
+                    "dns",
+                    "Triage encoded DNS labels and recover validated files",
+                    dns_stage,
+                ),
+                AnalysisStage(
+                    "icmp",
+                    "Inspect ICMP echo side channels and printable TTL oracles",
+                    icmp_stage,
+                ),
+                AnalysisStage(
+                    "tcp-urgent",
+                    "Inspect TCP urgent-pointer side channels",
+                    tcp_urgent_stage,
+                ),
+                AnalysisStage(
+                    "usb-hid",
+                    "Triage USB HID input report series",
+                    usb_hid_stage,
+                ),
+                AnalysisStage(
+                    "voip",
+                    "Reconstruct supported RTP audio and preserve VoIP hints",
+                    voip_stage,
                 ),
             ]
         )

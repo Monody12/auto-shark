@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
 
 from ..config import Settings
 from ..project import ProjectInfo, create_project
+from .i18n import apply_widget_translations, detect_language, translate
 from .services import PAGE_LIMIT, ProjectServices, resolve_tshark
 from .settings import GuiSettings, load_settings, save_settings
 from .workers import SingleRunWorker, StageWorker
@@ -96,10 +97,15 @@ class MainWindow(QMainWindow):
         self._timeline_items: list = []
         self._queue_items: list = []
         self._note_items: list = []
+        self._language = detect_language()
         self.setWindowTitle("Auto-Shark")
         self.resize(1280, 820)
         self._build_menu()
         self._build_body()
+        apply_widget_translations(self, self._language)
+
+    def _t(self, text: str) -> str:
+        return translate(text, self._language)
 
     # ------------------------------------------------------------------ setup
 
@@ -158,7 +164,7 @@ class MainWindow(QMainWindow):
         splitter.setSizes([220, 1060])
         self.setCentralWidget(splitter)
         self._register_refreshers()
-        self.statusBar().showMessage("No project open")
+        self.statusBar().showMessage(self._t("No project open"))
 
     def _page_scaffold(self, name: str, body: QWidget) -> QWidget:
         container = QWidget()
@@ -205,12 +211,10 @@ class MainWindow(QMainWindow):
         self._http_table = _table(
             ("Frame", "Method", "Host", "URI", "Status", "Code")
         )
-        self._http_table.itemSelectionChanged.connect(
-            lambda: self._show_selected_json(
-                "HTTP", self._http_table, self._http_items
-            )
-        )
+        self._http_table.itemSelectionChanged.connect(self._show_http_detail)
         layout.addWidget(self._http_table, 1)
+        self._params_table = _table(("Parameter", "Source", "Value"))
+        layout.addWidget(self._params_table, 1)
         nav = QHBoxLayout()
         prev = QPushButton("Previous")
         prev.clicked.connect(lambda: self._page_step("HTTP", -1))
@@ -449,7 +453,7 @@ class MainWindow(QMainWindow):
                 refresher()
             banner = self._banners.get(name)
             if banner is not None and self.services is None:
-                banner.setText("No project open — use File > Open project.")
+                banner.setText(self._t("No project open — use File > Open project."))
 
         return refresh
 
@@ -478,7 +482,9 @@ class MainWindow(QMainWindow):
             services = ProjectServices(Path(path))
             info: ProjectInfo = services.info()
         except (OSError, ValueError, FileNotFoundError) as error:
-            QMessageBox.critical(self, "Auto-Shark", f"Cannot open project: {error}")
+            QMessageBox.critical(
+                self, self._t("Auto-Shark"), self._t("Cannot open project: ") + str(error)
+            )
             return
         self.services = services
         self._offsets = {name: 0 for name in PAGE_NAMES}
@@ -489,7 +495,7 @@ class MainWindow(QMainWindow):
         self.refresh_current_page()
 
     def _open_project_dialog(self) -> None:
-        directory = QFileDialog.getExistingDirectory(self, "Open Auto-Shark project")
+        directory = QFileDialog.getExistingDirectory(self, self._t("Open Auto-Shark project"))
         if directory:
             self.open_project(Path(directory))
 
@@ -505,15 +511,16 @@ class MainWindow(QMainWindow):
     def _report_synced_path_error(self, error: Exception) -> None:
         QMessageBox.warning(
             self,
-            "Auto-Shark",
-            "Projects cannot live in a synced directory (for example OneDrive).\n"
+            self._t("Auto-Shark"),
+            self._t("Projects cannot live in a synced directory (for example OneDrive).\n")
+            +
             f"Use the default machine-local location instead:\n"
             f"{Settings.from_environment().project_root}",
         )
 
     def _open_capture_dialog(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
-            self, "Open capture", "", "Captures (*.pcap *.pcapng);;All files (*)"
+            self, self._t("Open capture"), "", "Captures (*.pcap *.pcapng);;All files (*)"
         )
         if not path:
             return
@@ -527,23 +534,27 @@ class MainWindow(QMainWindow):
             if "synced" in str(error):
                 self._report_synced_path_error(error)
             else:
-                QMessageBox.critical(self, "Auto-Shark", f"Cannot create project: {error}")
+                QMessageBox.critical(
+                    self, self._t("Auto-Shark"), self._t("Cannot create project: ") + str(error)
+                )
             return
         self.open_project(project_dir)
         tshark = self._tshark_path()
         if tshark is None:
             QMessageBox.warning(
                 self,
-                "Auto-Shark",
-                "TShark was not found.\n"
-                "Install Wireshark, then set the path in Edit > Settings…",
+                self._t("Auto-Shark"),
+                self._t(
+                    "TShark was not found.\n"
+                    "Install Wireshark, then set the path in Edit > Settings…"
+                ),
             )
             return
         self.run_analysis(capture=capture if created else None, tshark=tshark)
 
     def _settings_dialog(self) -> None:
         dialog = QDialog(self)
-        dialog.setWindowTitle("Auto-Shark settings")
+        dialog.setWindowTitle(self._t("Auto-Shark settings"))
         form = QFormLayout(dialog)
 
         self._settings_tshark = QLineEdit(self._settings.tshark_path or "")
@@ -582,7 +593,7 @@ class MainWindow(QMainWindow):
         form.addRow(buttons)
 
         def pick_tshark() -> None:
-            path, _ = QFileDialog.getOpenFileName(dialog, "Choose tshark executable")
+            path, _ = QFileDialog.getOpenFileName(dialog, self._t("Choose tshark executable"))
             if path:
                 self._settings_tshark.setText(path)
 
@@ -591,12 +602,12 @@ class MainWindow(QMainWindow):
 
             text = self._settings_tshark.text().strip()
             if not text:
-                self._settings_output.setPlainText("Enter a TShark path first.")
+                self._settings_output.setPlainText(self._t("Enter a TShark path first."))
                 return
             try:
                 result = probe_tshark(Path(text))
             except (OSError, ValueError) as error:
-                self._settings_output.setPlainText(f"error: {error}")
+                self._settings_output.setPlainText(self._t("error: ") + str(error))
                 return
             features = sum(1 for value in result.features.values() if value)
             self._settings_output.setPlainText(
@@ -609,7 +620,7 @@ class MainWindow(QMainWindow):
 
             host = self._settings_remote_host.text().strip()
             if not host:
-                self._settings_output.setPlainText("Enter a remote host first.")
+                self._settings_output.setPlainText(self._t("Enter a remote host first."))
                 return
             ssh, sftp = find_ssh_tools(
                 Path(self._settings_ssh.text().strip())
@@ -620,7 +631,7 @@ class MainWindow(QMainWindow):
                 else None,
             )
             if ssh is None or sftp is None:
-                self._settings_output.setPlainText("error: ssh and sftp clients not found")
+                self._settings_output.setPlainText(self._t("error: ssh and sftp clients not found"))
                 return
             paths = [
                 item.strip()
@@ -639,7 +650,7 @@ class MainWindow(QMainWindow):
                     paths,
                 )
             except (OSError, ValueError) as error:
-                self._settings_output.setPlainText(f"error: {error}")
+                self._settings_output.setPlainText(self._t("error: ") + str(error))
                 return
             self._settings_output.setPlainText(
                 json.dumps(probe, ensure_ascii=False, sort_keys=True, indent=2)
@@ -660,11 +671,13 @@ class MainWindow(QMainWindow):
         try:
             save_settings(self._settings)
         except OSError as error:
-            QMessageBox.critical(self, "Auto-Shark", f"Cannot save settings: {error}")
+            QMessageBox.critical(
+                self, self._t("Auto-Shark"), self._t("Cannot save settings: ") + str(error)
+            )
 
     def _new_project_dialog(self) -> None:
         dialog = QDialog(self)
-        dialog.setWindowTitle("New project from capture")
+        dialog.setWindowTitle(self._t("New project from capture"))
         form = QFormLayout(dialog)
         capture_edit = QLineEdit()
         capture_button = QPushButton("Browse…")
@@ -696,7 +709,7 @@ class MainWindow(QMainWindow):
 
         def pick_capture() -> None:
             path, _ = QFileDialog.getOpenFileName(
-                dialog, "Choose capture", "", "Captures (*.pcap *.pcapng);;All files (*)"
+                dialog, self._t("Choose capture"), "", "Captures (*.pcap *.pcapng);;All files (*)"
             )
             if path:
                 capture_edit.setText(path)
@@ -704,7 +717,7 @@ class MainWindow(QMainWindow):
                     project_edit.setText(str(self._default_project_root(Path(path))))
 
         def pick_project() -> None:
-            path = QFileDialog.getExistingDirectory(dialog, "Choose project directory")
+            path = QFileDialog.getExistingDirectory(dialog, self._t("Choose project directory"))
             if path:
                 project_edit.setText(path)
 
@@ -716,7 +729,9 @@ class MainWindow(QMainWindow):
         project_text = project_edit.text().strip()
         tshark_text = tshark_edit.text().strip()
         if not capture_text or not project_text:
-            QMessageBox.warning(self, "Auto-Shark", "Capture and project paths are required.")
+            QMessageBox.warning(
+                self, self._t("Auto-Shark"), self._t("Capture and project paths are required.")
+            )
             return
         try:
             info = create_project(Path(capture_text), Path(project_text))
@@ -724,7 +739,9 @@ class MainWindow(QMainWindow):
             if "synced" in str(error):
                 self._report_synced_path_error(error)
             else:
-                QMessageBox.critical(self, "Auto-Shark", f"Cannot create project: {error}")
+                QMessageBox.critical(
+                    self, self._t("Auto-Shark"), self._t("Cannot create project: ") + str(error)
+                )
             return
         self.open_project(info.root)
         tshark = (
@@ -735,9 +752,11 @@ class MainWindow(QMainWindow):
         if tshark is None:
             QMessageBox.warning(
                 self,
-                "Auto-Shark",
-                "TShark was not found.\n"
-                "Install Wireshark, then set the path in Edit > Settings…",
+                self._t("Auto-Shark"),
+                self._t(
+                    "TShark was not found.\n"
+                    "Install Wireshark, then set the path in Edit > Settings…"
+                ),
             )
             return
         self.run_analysis(capture=Path(capture_text), tshark=tshark)
@@ -748,37 +767,43 @@ class MainWindow(QMainWindow):
         self, *, capture: Optional[Path] = None, tshark: Optional[Path] = None
     ) -> None:
         if self.services is None:
-            QMessageBox.information(self, "Auto-Shark", "Open a project first.")
+            QMessageBox.information(self, self._t("Auto-Shark"), self._t("Open a project first."))
             return
         executable = tshark or self._tshark_path()
         if executable is None:
             QMessageBox.warning(
                 self,
-                "Auto-Shark",
-                "TShark was not found. Install Wireshark, then use Edit > Settings… "
-                "to configure the path.",
+                self._t("Auto-Shark"),
+                self._t(
+                    "TShark was not found. Install Wireshark, then use Edit > Settings… "
+                    "to configure the path."
+                ),
             )
             return
         stages = self.services.analysis_stages(executable, capture=capture)
         self._start_stage_worker(stages)
 
     def _start_stage_worker(self, stages: list) -> None:
-        dialog = QProgressDialog("Preparing analysis…", "Cancel", 0, len(stages), self)
-        dialog.setWindowTitle("Auto-Shark analysis")
+        dialog = QProgressDialog(
+            self._t("Preparing analysis…"), self._t("Cancel"), 0, len(stages), self
+        )
+        dialog.setWindowTitle(self._t("Auto-Shark analysis"))
         dialog.setWindowModality(Qt.WindowModality.WindowModal)
         dialog.setMinimumDuration(0)
         worker = StageWorker(stages)
         self._worker = worker
 
         def on_started(title: str) -> None:
-            dialog.setLabelText(f"Running: {title}")
+            dialog.setLabelText(self._t("Running: ") + title)
 
         def on_finished_stage(key: str, summary: str) -> None:
             dialog.setValue(dialog.value() + 1)
 
         def on_failed(key: str, error: str) -> None:
             QMessageBox.warning(
-                self, "Auto-Shark", f"Stage '{key}' failed:\n{error}"
+                self,
+                self._t("Auto-Shark"),
+                self._t("Stage '") + key + self._t("' failed:\n") + error,
             )
 
         def on_run_done(completed: bool, message: str) -> None:
@@ -786,9 +811,9 @@ class MainWindow(QMainWindow):
             self._worker = None
             self._cancel_action.setEnabled(False)
             if completed:
-                QMessageBox.information(self, "Auto-Shark", message)
+                QMessageBox.information(self, self._t("Auto-Shark"), message)
             else:
-                QMessageBox.warning(self, "Auto-Shark", message)
+                QMessageBox.warning(self, self._t("Auto-Shark"), message)
             self.refresh_current_page()
 
         worker.stage_started.connect(on_started)
@@ -807,10 +832,10 @@ class MainWindow(QMainWindow):
 
     def _export_bundle(self) -> None:
         if self.services is None:
-            QMessageBox.information(self, "Auto-Shark", "Open a project first.")
+            QMessageBox.information(self, self._t("Auto-Shark"), self._t("Open a project first."))
             return
         directory = QFileDialog.getExistingDirectory(
-            self, "Choose a new or empty export directory"
+            self, self._t("Choose a new or empty export directory")
         )
         if not directory:
             return
@@ -823,8 +848,8 @@ class MainWindow(QMainWindow):
                     Path(directory), include_evidence=include
                 )
 
-        dialog = QProgressDialog("Exporting bounded bundle…", None, 0, 0, self)
-        dialog.setWindowTitle("Auto-Shark export")
+        dialog = QProgressDialog(self._t("Exporting bounded bundle…"), None, 0, 0, self)
+        dialog.setWindowTitle(self._t("Auto-Shark export"))
         dialog.setWindowModality(Qt.WindowModality.WindowModal)
         dialog.setMinimumDuration(0)
         worker = SingleRunWorker(_Bound())
@@ -833,11 +858,13 @@ class MainWindow(QMainWindow):
         def on_success(summary: str) -> None:
             dialog.reset()
             self._export_result.setPlainText(summary)
-            self._banners["Export"].setText("Export finished.")
+            self._banners["Export"].setText(self._t("Export finished."))
 
         def on_failure(error: str) -> None:
             dialog.reset()
-            QMessageBox.critical(self, "Auto-Shark", f"Export failed:\n{error}")
+            QMessageBox.critical(
+                self, self._t("Auto-Shark"), self._t("Export failed:\n") + error
+            )
 
         worker.succeeded.connect(on_success)
         worker.failed.connect(on_failure)
@@ -852,12 +879,14 @@ class MainWindow(QMainWindow):
         subject = self._note_subject.text().strip()
         body = self._note_body.toPlainText()
         if not subject or not body:
-            QMessageBox.warning(self, "Auto-Shark", "Subject ID and body are required.")
+            QMessageBox.warning(
+                self, self._t("Auto-Shark"), self._t("Subject ID and body are required.")
+            )
             return
         try:
             self.services.add_note(kind, subject, body)
         except (OSError, ValueError) as error:
-            QMessageBox.critical(self, "Auto-Shark", str(error))
+            QMessageBox.critical(self, self._t("Auto-Shark"), str(error))
             return
         self._note_body.clear()
         self._refresh_page("Notes")()
@@ -869,12 +898,12 @@ class MainWindow(QMainWindow):
         subject = self._note_subject.text().strip()
         state = self._mark_state.currentText()
         if not subject:
-            QMessageBox.warning(self, "Auto-Shark", "Subject ID is required.")
+            QMessageBox.warning(self, self._t("Auto-Shark"), self._t("Subject ID is required."))
             return
         try:
             self.services.set_review_mark(kind, subject, state)
         except (OSError, ValueError) as error:
-            QMessageBox.critical(self, "Auto-Shark", str(error))
+            QMessageBox.critical(self, self._t("Auto-Shark"), str(error))
             return
         self.refresh_current_page()
 
@@ -883,18 +912,18 @@ class MainWindow(QMainWindow):
             return
         row = self._notes_table.currentRow()
         if row < 0 or row >= len(self._note_items):
-            QMessageBox.information(self, "Auto-Shark", "Select a note first.")
+            QMessageBox.information(self, self._t("Auto-Shark"), self._t("Select a note first."))
             return
         note = self._note_items[row]
         note_id = str(note.get("note_id", ""))
         body = self._note_body.toPlainText()
         if not body:
-            QMessageBox.warning(self, "Auto-Shark", "Enter the new body first.")
+            QMessageBox.warning(self, self._t("Auto-Shark"), self._t("Enter the new body first."))
             return
         try:
             self.services.update_note(note_id, body)
         except (OSError, ValueError) as error:
-            QMessageBox.critical(self, "Auto-Shark", str(error))
+            QMessageBox.critical(self, self._t("Auto-Shark"), str(error))
             return
         self._refresh_page("Notes")()
 
@@ -903,12 +932,12 @@ class MainWindow(QMainWindow):
             return
         row = self._queue_table.currentRow()
         if row < 0 or row >= len(self._queue_items):
-            QMessageBox.information(self, "Auto-Shark", "Select a task first.")
+            QMessageBox.information(self, self._t("Auto-Shark"), self._t("Select a task first."))
             return
         task = self._queue_items[row]
         task_id = str(task.get("task_id", ""))
         dialog = QDialog(self)
-        dialog.setWindowTitle("Change manual task state")
+        dialog.setWindowTitle(self._t("Change manual task state"))
         form = QFormLayout(dialog)
         combo = QComboBox()
         combo.addItems(TASK_STATES)
@@ -928,7 +957,7 @@ class MainWindow(QMainWindow):
         try:
             self.services.update_manual_task_state(task_id, combo.currentText())
         except (OSError, ValueError) as error:
-            QMessageBox.critical(self, "Auto-Shark", str(error))
+            QMessageBox.critical(self, self._t("Auto-Shark"), str(error))
             return
         self._refresh_page("Manual queue")()
 
@@ -937,18 +966,51 @@ class MainWindow(QMainWindow):
     def _require_services(self, name: str) -> bool:
         banner = self._banners[name]
         if self.services is None:
-            banner.setText("No project open — use File > Open project.")
+            banner.setText(self._t("No project open — use File > Open project."))
             return False
         return True
 
     def _set_banner(
         self, name: str, *, offset: int, count: int, total: int, extra: str = ""
     ) -> None:
-        more = " — more available" if offset + count < total else ""
+        more = self._t(" — more available") if offset + count < total else ""
         suffix = f" {extra}" if extra else ""
         self._banners[name].setText(
-            f"Showing {count} of {total} at offset {offset}{more}{suffix}"
+            f"{self._t('Showing')} {count} {self._t('of')} {total} "
+            f"{self._t('at offset')} {offset}{more}{suffix}"
         )
+
+    def _show_http_detail(self) -> None:
+        """Render the selected transaction's parameters plus the JSON detail."""
+        row = self._http_table.currentRow()
+        detail = self._details.get("HTTP")
+        if detail is None or not 0 <= row < len(self._http_items):
+            self._fill_table(self._params_table, [])
+            if detail is not None:
+                detail.setPlainText("")
+            return
+        item = self._http_items[row]
+        if detail is not None:
+            detail.setPlainText(
+                json.dumps(item, ensure_ascii=False, sort_keys=True, indent=2)
+            )
+        rows = []
+        transaction_id = str(item.get("transaction_id", ""))
+        if self.services is not None and transaction_id:
+            try:
+                payload = self.services.transaction_detail(transaction_id)
+            except (OSError, ValueError, KeyError):
+                payload = None
+            if payload is not None:
+                request = payload.get("request") or {}
+                for param in request.get("query_params", []):
+                    rows.append((param.get("name"), "query", param.get("value")))
+                for field in request.get("form_fields", []):
+                    value = field.get("value")
+                    if field.get("truncated"):
+                        value = f"{value}…"
+                    rows.append((field.get("name"), "form", value))
+        self._fill_table(self._params_table, rows)
 
     def _show_selected_json(
         self, name: str, table: QTableWidget, items: list
@@ -990,7 +1052,7 @@ class MainWindow(QMainWindow):
         try:
             return loader()
         except (OSError, ValueError, KeyError) as error:
-            self._banners[name].setText(f"error: {error}")
+            self._banners[name].setText(self._t("error: ") + str(error))
             return None
 
     def _refresh_overview(self) -> None:
@@ -1002,20 +1064,20 @@ class MainWindow(QMainWindow):
         try:
             payload = self.services.overview()
         except (OSError, ValueError, KeyError) as error:
-            self._banners["Overview"].setText(f"error: {error}")
+            self._banners["Overview"].setText(self._t("error: ") + str(error))
             return
         capture = payload.get("capture", {})
         overview = payload.get("overview", {})
         rows = [
-            ("Capture", capture.get("source_name", "")),
-            ("Capture SHA-256", str(capture.get("sha256", ""))),
-            ("Capture bytes", capture.get("byte_length", "")),
-            ("Database schema", capture.get("database_schema", "")),
+            (self._t("Capture"), capture.get("source_name", "")),
+            (self._t("Capture SHA-256"), str(capture.get("sha256", ""))),
+            (self._t("Capture bytes"), capture.get("byte_length", "")),
+            (self._t("Database schema"), capture.get("database_schema", "")),
         ]
         for name in sorted(overview):
             rows.append((name, overview[name]))
         for status, count in sorted(payload.get("coverage", {}).items()):
-            rows.append((f"coverage: {status}", count))
+            rows.append((self._t("coverage: ") + self._t(str(status)), count))
         self._fill_table(table, rows)
         text = json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2)
         limit = 200_000
@@ -1027,8 +1089,14 @@ class MainWindow(QMainWindow):
             for name, value in payload.items()
             if isinstance(value, dict) and value.get("truncated")
         ]
-        extra = f"truncated collections: {', '.join(sorted(truncated))}" if truncated else ""
-        self._banners["Overview"].setText("Overview ready." + (f" {extra}" if extra else ""))
+        extra = (
+            self._t("truncated collections: ") + ", ".join(sorted(truncated))
+            if truncated
+            else ""
+        )
+        self._banners["Overview"].setText(
+            self._t("Overview ready.") + (f" {extra}" if extra else "")
+        )
 
     def _refresh_http(self) -> None:
         offset = self._offsets.get("HTTP", 0)
@@ -1214,7 +1282,7 @@ class MainWindow(QMainWindow):
             offset=offset,
             count=payload.get("count", len(items)),
             total=payload.get("total", len(items)),
-            extra="(duplicates included)" if include else "",
+            extra=self._t("(duplicates included)") if include else "",
         )
 
     def _refresh_queue(self) -> None:
@@ -1281,4 +1349,4 @@ class MainWindow(QMainWindow):
 
     def _refresh_export(self) -> None:
         if self._require_services("Export"):
-            self._banners["Export"].setText("Ready to export a bounded offline bundle.")
+            self._banners["Export"].setText(self._t("Ready to export a bounded offline bundle."))

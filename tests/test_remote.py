@@ -186,6 +186,34 @@ def test_ssh_transport_argv_and_batch_are_constrained(tmp_path) -> None:
         transport.sftp_batch_text([("get", "../etc/passwd", "x")])
 
 
+def test_sftp_transfer_uses_and_cleans_a_system_temporary_batch(tmp_path, monkeypatch) -> None:
+    (tmp_path / "ssh.exe").write_bytes(b"")
+    (tmp_path / "sftp.exe").write_bytes(b"")
+    source = tmp_path / "source.bin"
+    source.write_bytes(b"payload")
+    transport = SshTransport(
+        RemoteNodeConfig(
+            host="root@node.example",
+            ssh_executable=tmp_path / "ssh.exe",
+            sftp_executable=tmp_path / "sftp.exe",
+        )
+    )
+    observed_batch = None
+
+    def fake_run(argv, **_kwargs):
+        nonlocal observed_batch
+        observed_batch = Path(argv[argv.index("-b") + 1])
+        assert observed_batch.is_file()
+        assert str(source).replace("\\", "/") in observed_batch.read_text(encoding="utf-8")
+        return ProcessResult(tuple(argv), 0, b"", b"", False, False, False, False)
+
+    monkeypatch.setattr("auto_shark.remote.run_bounded", fake_run)
+    transport.put_file(source, ".auto-shark-jobs/input/source.bin")
+
+    assert observed_batch is not None and not observed_batch.exists()
+    assert not (tmp_path / "sftp-put.bat").exists()
+
+
 def test_probe_remote_node_rejects_relative_and_reports(tmp_path, monkeypatch) -> None:
     (tmp_path / "ssh.exe").write_bytes(b"")
     (tmp_path / "sftp.exe").write_bytes(b"")

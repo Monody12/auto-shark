@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shutil
+import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -171,28 +173,39 @@ class SshTransport(RemoteTransport):
             lines.append(f'{operation} "{source_posix}" "{target}"')
         return "\n".join(lines) + "\n"
 
-    def _transfer(self, operations: Sequence[tuple[str, str, str]], batch_path: Path) -> None:
-        batch_path.write_text(self.sftp_batch_text(operations), encoding="utf-8")
-        argv = [
-            str(self.config.sftp_executable),
-            *self._options(),
-            "-b",
-            str(batch_path),
-            self.config.host,
-        ]
-        result = run_bounded(argv, timeout_seconds=300, stdout_limit=65536, stderr_limit=65536)
-        if result.returncode != 0 or result.timed_out:
-            raise RemoteTransportError(
-                f"sftp transfer failed with exit code {result.returncode}"
+    def _transfer(self, operations: Sequence[tuple[str, str, str]]) -> None:
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix="auto-shark-sftp-", suffix=".bat"
+        )
+        batch_path = Path(temporary_name)
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
+                stream.write(self.sftp_batch_text(operations))
+            argv = [
+                str(self.config.sftp_executable),
+                *self._options(),
+                "-b",
+                str(batch_path),
+                self.config.host,
+            ]
+            result = run_bounded(
+                argv,
+                timeout_seconds=300,
+                stdout_limit=65536,
+                stderr_limit=65536,
             )
+            if result.returncode != 0 or result.timed_out:
+                raise RemoteTransportError(
+                    f"sftp transfer failed with exit code {result.returncode}"
+                )
+        finally:
+            batch_path.unlink(missing_ok=True)
 
     def put_file(self, local_path: Path, remote_path: str) -> None:
-        self._transfer([("put", str(local_path), _checked_remote_path(remote_path))],
-                       local_path.parent / "sftp-put.bat")
+        self._transfer([("put", str(local_path), _checked_remote_path(remote_path))])
 
     def get_file(self, remote_path: str, local_path: Path) -> None:
-        self._transfer([("get", _checked_remote_path(remote_path), str(local_path))],
-                       local_path.parent / "sftp-get.bat")
+        self._transfer([("get", _checked_remote_path(remote_path), str(local_path))])
 
 
 def probe_remote_node(
@@ -457,4 +470,21 @@ def run_remote_job(
         "result": json.loads(result_json) if result_json is not None else None,
         "job_directory": str(job_dir),
         "error": error,
+    }
+
+
+def setup_remote_adapter(config: RemoteNodeConfig) -> dict:
+    """Upload the packaged working-directory adapter to the node once."""
+    transport = SshTransport(config)
+    root = config.remote_root
+    transport.make_directory(root)
+    source = Path(__file__).resolve().parent / "assets" / "cwd_adapter.py"
+    remote_path = f"{root}/cwd_adapter.py"
+    transport.put_file(source, remote_path)
+    result = transport.run(["test", "-f", remote_path], 30, 4096, 4096)
+    return {
+        "schema_version": "auto-shark.remote-setup/v1",
+        "host": config.host,
+        "remote_adapter": remote_path,
+        "ok": result.returncode == 0 and not result.timed_out,
     }

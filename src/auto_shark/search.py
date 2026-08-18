@@ -6,8 +6,30 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-FLAG_PATTERN = re.compile(rb"(?i:(?:flag|ctf|key|answer))\{[^{}\r\n]{1,256}\}")
+FLAG_PATTERN = re.compile(
+    rb"(?i:(?:flag|ctf|key|answer)\{[^{}\r\n]{1,256}\}"
+    rb"|\{(?:flag|ctf|key|answer)[:=][^{}\r\n]{1,256}\}"
+    rb"|(?<![A-Za-z0-9_])(?:flag|ctf|key|answer)[:=]"
+    rb"[A-Za-z0-9][A-Za-z0-9_.+/-]{7,255}(?![A-Za-z0-9_.+/-]))"
+)
+CSS_DECLARATION = re.compile(
+    rb"(?i)(?:^|;)(?:background(?:-position)?|color|display|font-size|line-height|"
+    rb"position|text-align|text-anchor|word-break|word-wrap)\s*:"
+)
 MAX_MATCH_BYTES = 290
+
+
+def _plausible_flag(value: bytes) -> bool:
+    if value.startswith(b"{"):
+        return True
+    if b"{" not in value:
+        delimiter = b":" if b":" in value else b"="
+        token = value.split(delimiter, 1)[1]
+        return any(chr(byte).isalpha() for byte in token) and any(
+            chr(byte).isdigit() for byte in token
+        )
+    inner = value[value.find(b"{") + 1 : -1]
+    return CSS_DECLARATION.search(inner) is None
 
 
 @dataclass(frozen=True)
@@ -53,9 +75,13 @@ def scan_flag_matches(
             combined = carry + chunk
             carry_length = len(carry)
             base_offset = scanned - carry_length
+            at_file_end = start_offset + scanned + len(chunk) >= file_length
             for match in FLAG_PATTERN.finditer(combined):
-                if match.end() > carry_length:
-                    matches.append(ByteMatch(base_offset + match.start(), match.group()))
+                value = match.group()
+                if b"{" not in value and match.end() == len(combined) and not at_file_end:
+                    continue
+                if match.end() > carry_length and _plausible_flag(value):
+                    matches.append(ByteMatch(base_offset + match.start(), value))
                     if len(matches) >= max_matches:
                         candidate_limited = True
                         break

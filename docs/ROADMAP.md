@@ -128,7 +128,10 @@ all exit criteria are verified and recorded in `PROJECT_STATE.md`.
   Status: complete with the injectable `RemoteTransport`, charset-constrained
   ssh/sftp argument-list transport, absolute remote-executable probing,
   request/result hash persistence into `remote_job`, and explicit fetch/
-  limit skips. Live-node execution awaits user-provided credentials.
+  limit skips. The configured CentOS node was probed successfully and the
+  adapter was uploaded; a full ctf-stego-toolkit run was bounded at 120 seconds
+  after producing outputs, so lightweight per-tool jobs remain the recommended
+  live-node path.
 - Capability probing, isolation, timeout, output cap, hash verification tests.
   Status: complete for local runs, the adapter, and the remote runner under
   the fake transport; live-node equivalents run during real-node validation.
@@ -138,7 +141,8 @@ all exit criteria are verified and recorded in `PROJECT_STATE.md`.
 - Windows launcher/package, licenses, notices, and clean-machine install test.
   Status: complete except the one-time hands-on clean-machine run: MIT
   LICENSE, THIRD_PARTY_NOTICES.md, `scripts/auto-shark-gui.cmd`, version
-  0.1.0 Beta, README/user guide, and the scripted clean-machine procedure in
+  0.2.0 Beta, stable-root portable ZIP, stable-AppId per-user installer,
+  README/user guide, and the scripted clean-machine procedure in
   `docs/RELEASE_CHECKLIST.md`.
 - Windows TShark 4.6.7 and Linux supported-profile CI.
   Status: complete; CI installs real TShark on both matrix runners, runs the
@@ -152,3 +156,17 @@ all exit criteria are verified and recorded in `PROJECT_STATE.md`.
   Status: complete; `docs/USER_GUIDE.md` and `docs/RELEASE_CHECKLIST.md`
   record verified evidence and the two user-executable residuals (clean
   machine test, live Linux node).
+
+## v0.2.0 - Extended traffic triage and Windows delivery (complete)
+
+- Added bounded DNS, ICMP, TFTP, RTP/G.711, TCP urgent-pointer, USB HID,
+  generic TCP-text, OGNL, and image-analysis workflows with CLI/GUI stages,
+  provenance, budgets, artifacts, findings, and manual-queue integration.
+- Added Simplified Chinese GUI localization with English fallback and automatic
+  locale selection on supported Windows/Linux desktops.
+- Added a stable-AppId Windows installer, stable-root portable archive,
+  deterministic checksums, and a tag-triggered GitHub Release workflow.
+- Completed the pre-release regression and hardening pass across legacy and new
+  code: bounded HTTP detail output, verified Blob reads, side-channel tool-run
+  provenance, RTP conflict handling, incomplete TCP reconstruction coverage,
+  stale manual-task filtering, SFTP batch cleanup, and frozen adapter inclusion.

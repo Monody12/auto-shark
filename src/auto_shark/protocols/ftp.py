@@ -94,7 +94,7 @@ def parse_ftp_line(line: bytes, fields: Optional[tuple[str, ...]] = None) -> Ftp
         kind = "data"
     elif request_command:
         kind = "request"
-    elif response_code is not None:
+    elif response_code is not None or values["ftp.response.arg"]:
         kind = "response"
     else:
         raise ValueError("TShark row is neither FTP control nor FTP-DATA")

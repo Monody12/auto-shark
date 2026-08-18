@@ -159,6 +159,10 @@ def test_export_bundle_is_self_contained_exact_and_repeatable(tmp_path) -> None:
     html = (first_dir / "report.html").read_text(encoding="utf-8")
     assert "<script" not in html.lower()
     assert "https://" not in html
+    assert "<table" in html and "<h2>Capture</h2>" in html
+    assert "flag{safe}" in html  # candidate value rendered and escaped-safe
+    assert "<details>" in html and "report JSON" in html
+    assert "SECRET_BLOB_TEXT" not in html
 
 
 def test_export_bundle_records_missing_and_budget_skips(tmp_path) -> None:
@@ -182,3 +186,89 @@ def test_export_bundle_records_missing_and_budget_skips(tmp_path) -> None:
     assert missing.evidence_skips == 2
     with pytest.raises(ValueError, match="new or empty"):
         export_bundle(root, tmp_path / "budget-export")
+
+
+def test_report_recognizes_voip_and_recommends_rtp_workflow(tmp_path) -> None:
+    root, _ = _report_project(tmp_path)
+    database = Database(root / "project.sqlite")
+    with database.connect() as connection:
+        capture_id = int(connection.execute("SELECT id FROM capture").fetchone()[0])
+        tool_id = int(connection.execute("SELECT id FROM tool_run").fetchone()[0])
+        connection.execute(
+            "INSERT INTO capture_inventory_run "
+            "(inventory_run_id,capture_id,tool_run_id,policy_json,status,processed_frames,"
+            "skipped_frames,skipped_conversations,skipped_protocol_labels,started_at,ended_at) "
+            "VALUES('voip-inventory',?,?,'{}','completed',500,0,0,0,?,?)",
+            (capture_id, tool_id, _now(), _now()),
+        )
+        inventory_id = int(connection.execute("SELECT last_insert_rowid()").fetchone()[0])
+        for label, count in (("rtp", 480), ("rtpevent", 20), ("sip", 8)):
+            connection.execute(
+                "INSERT INTO protocol_observation "
+                "(observation_id,capture_id,protocol_label,frame_count,first_frame,last_frame,"
+                "inventory_run_id,updated_at) VALUES(?,?,?,?,1,500,?,?)",
+                (f"protocol-{label}", capture_id, label, count, inventory_id, _now()),
+            )
+
+    assessment = collect_report(root).payload["assessment"]
+
+    assert assessment["behaviors"][0]["kind"] == "voip-traffic"
+    assert assessment["behaviors"][0]["count"] == 480
+    assert "voip-extract" in assessment["behaviors"][0]["hint"]
+    assert any("telephone-event" in item for item in assessment["suggested_focus"])
+
+
+def test_report_maps_icmp_ttl_oracle_finding(tmp_path) -> None:
+    root, _ = _report_project(tmp_path)
+    database = Database(root / "project.sqlite")
+    with database.connect() as connection:
+        connection.execute(
+            "INSERT INTO finding(finding_id,detector,detector_version,title,description,"
+            "severity,confidence,created_at) VALUES('icmp-finding',"
+            "'icmp-ttl-oracle','1','TTL oracle','selective replies','high',0.92,?)",
+            (_now(),),
+        )
+        finding_id = int(connection.execute("SELECT last_insert_rowid()").fetchone()[0])
+        evidence_id = int(
+            connection.execute(
+                "SELECT id FROM evidence WHERE evidence_id='evidence-0'"
+            ).fetchone()[0]
+        )
+        connection.execute(
+            "INSERT INTO finding_evidence(finding_id,evidence_id,role) VALUES(?,?,?)",
+            (finding_id, evidence_id, "icmp-ttl-probe-series"),
+        )
+
+    behaviors = collect_report(root).payload["assessment"]["behaviors"]
+    item = next(value for value in behaviors if value["kind"] == "icmp-ttl-oracle")
+
+    assert item["count"] == 1
+    assert "reply" in item["hint"] and "uncaptured" in item["hint"]
+
+
+def test_report_maps_ognl_findings_to_web_command_execution(tmp_path) -> None:
+    root, _ = _report_project(tmp_path)
+    database = Database(root / "project.sqlite")
+    with database.connect() as connection:
+        connection.execute(
+            "INSERT INTO finding(finding_id,detector,detector_version,title,description,"
+            "severity,confidence,created_at) VALUES('ognl-finding',"
+            "'struts-ognl-command-injection','1','OGNL','command','critical',0.99,?)",
+            (_now(),),
+        )
+        finding_id = int(connection.execute("SELECT last_insert_rowid()").fetchone()[0])
+        evidence_id = int(
+            connection.execute(
+                "SELECT id FROM evidence WHERE evidence_id='evidence-0'"
+            ).fetchone()[0]
+        )
+        connection.execute(
+            "INSERT INTO finding_evidence(finding_id,evidence_id,role) VALUES(?,?,?)",
+            (finding_id, evidence_id, "command-expression"),
+        )
+
+    behaviors = collect_report(root).payload["assessment"]["behaviors"]
+    item = next(value for value in behaviors if value["kind"] == "web-command-execution")
+
+    assert item["count"] == 1
+    assert "form field name" in item["hint"] and "correlated HTTP response" in item["hint"]

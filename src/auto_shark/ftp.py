@@ -262,10 +262,22 @@ def _suggested_name(argument: Optional[str]) -> Optional[str]:
 def _magic(path: Path) -> tuple[Optional[str], Optional[str]]:
     with path.open("rb") as stream:
         prefix = stream.read(8)
+    if prefix.startswith(b"PK\x03\x04"):
+        return "application/zip", "zip"
+    if prefix.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png", "png"
+    if prefix.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg", "jpeg"
+    if prefix.startswith(b"%PDF-"):
+        return "application/pdf", "pdf"
     if prefix.startswith(b"Rar!\x1a\x07\x00"):
         return "application/vnd.rar", "rar4"
     if prefix.startswith(b"Rar!\x1a\x07\x01\x00"):
         return "application/vnd.rar", "rar5"
+    if prefix.startswith(b"\x1f\x8b\x08"):
+        return "application/gzip", "gzip"
+    if prefix.startswith(b"MZ"):
+        return "application/vnd.microsoft.portable-executable", "pe"
     return None, None
 
 

@@ -317,6 +317,201 @@ def collect_report(
         "overview": {
             name: int(collection["total"]) for name, collection in collections.items()
         },
+        "assessment": _assessment(collections),
         **collections,
     }
     return ReportDocument(_redact_local_paths(payload, project))
+
+
+def _assessment(collections: dict) -> dict:
+    """Derive a coarse challenge-type verdict and next-step focus lines."""
+
+    def items(name: str) -> list:
+        collection = collections.get(name) or {}
+        return list(collection.get("items") or [])
+
+    behaviors = []
+    protocol_counts = {
+        str(item.get("protocol_label")): int(item.get("frame_count") or 0)
+        for item in items("protocols")
+    }
+    if protocol_counts.get("rtp"):
+        behaviors.append(
+            {
+                "kind": "voip-traffic",
+                "source": "protocol-inventory",
+                "count": protocol_counts["rtp"],
+                "hint": (
+                    "Inspect SIP/SDP setup and both RTP directions. Run voip-extract "
+                    "to reconstruct supported G.711 streams as WAV; if playback sounds "
+                    "like modem tones, try an FSK decoder such as minimodem."
+                ),
+            }
+        )
+    if protocol_counts.get("snmp"):
+        behaviors.append(
+            {
+                "kind": "snmp-traffic",
+                "source": "protocol-inventory",
+                "count": protocol_counts["snmp"],
+                "hint": (
+                    "Review SNMP community strings, OIDs, and response OctetString "
+                    "values for sensitive host information or embedded flags."
+                ),
+            }
+        )
+    dns_evidence = [
+        item for item in items("evidence") if item.get("source_kind") == "dns-label-stream"
+    ]
+    if dns_evidence:
+        behaviors.append(
+            {
+                "kind": "dns-encoded-labels",
+                "source": "dns-label-triage",
+                "count": len(dns_evidence),
+                "hint": (
+                    "Review the encoded-label groups, duplicate rate, decoded preview, "
+                    "and any structurally validated recovered artifacts."
+                ),
+            }
+        )
+    tftp_evidence = [
+        item for item in items("evidence") if item.get("source_kind") == "tftp-data"
+    ]
+    if tftp_evidence:
+        behaviors.append(
+            {
+                "kind": "tftp-file-transfer",
+                "source": "tftp-reassembly",
+                "count": len(tftp_evidence),
+                "hint": (
+                    "Review both RRQ downloads and WRQ uploads. Inspect recovered text and "
+                    "file metadata before using bounded image or archive analyzers."
+                ),
+            }
+        )
+    detector_counts: dict[str, int] = {}
+    for finding in items("findings"):
+        detector = str(finding.get("detector", "unknown"))
+        detector_counts[detector] = detector_counts.get(detector, 0) + 1
+    for detector, count in sorted(detector_counts.items()):
+        if "sql-injection" in detector:
+            kind, hint = "sql-injection", (
+                "Inspect the flagged parameters and response differences; compare "
+                "against the clean baseline requests when present."
+            )
+        elif "webshell" in detector:
+            kind, hint = "webshell-activity", (
+                "Follow the operation timeline: uploads, directory listings, "
+                "file writes/reads, and encoded command traffic."
+            )
+        elif "ognl" in detector:
+            kind, hint = "web-command-execution", (
+                "Inspect the exact URL form field name, extracted command, and "
+                "the correlated HTTP response evidence."
+            )
+        elif detector == "icmp-ttl-oracle":
+            kind, hint = "icmp-ttl-oracle", (
+                "Read candidate ASCII from request TTL values and use explicit echo reply "
+                "references as the acceptance oracle. Do not infer uncaptured steps."
+            )
+        elif detector.startswith("image-analyzer"):
+            kind, hint = "image-analysis", (
+                "Review the preserved analyzer reports for the image artifacts."
+            )
+        else:
+            kind, hint = detector, "Review the finding evidence links."
+        behaviors.append(
+            {"kind": kind, "source": detector, "count": count, "hint": hint}
+        )
+
+    candidates = items("candidates")
+    top = candidates[0] if candidates else None
+    candidate_summary = {
+        "total": int((collections.get("candidates") or {}).get("total", len(candidates))),
+        "top": None
+        or (top and {
+            "kind": top.get("kind"),
+            "rank_score": top.get("rank_score"),
+            "value": top.get("normalized_value"),
+        }),
+    }
+    artifact_summary = {
+        "image": 0,
+        "audio": 0,
+        "archive": 0,
+        "executable": 0,
+        "other": 0,
+    }
+    for artifact in items("artifacts"):
+        media = str(artifact.get("detected_media_type") or "")
+        if media.startswith("image/"):
+            artifact_summary["image"] += 1
+        elif media.startswith("audio/"):
+            artifact_summary["audio"] += 1
+        elif any(token in media for token in ("zip", "rar", "gzip", "compressed")):
+            artifact_summary["archive"] += 1
+        elif "executable" in media or media == "application/x-dosexec":
+            artifact_summary["executable"] += 1
+        else:
+            artifact_summary["other"] += 1
+
+    focus: list[str] = []
+    if top is not None:
+        focus.append(
+            f"Top candidate ({top.get('kind')}, rank {top.get('rank_score')}): "
+            f"{top.get('normalized_value')}"
+        )
+    if artifact_summary["archive"]:
+        focus.append(
+            f"{artifact_summary['archive']} archive artifact(s) need manual review; "
+            "password recovery stays out of scope by design."
+        )
+    if artifact_summary["image"]:
+        focus.append(
+            f"{artifact_summary['image']} image artifact(s) available for declared "
+            "image analyzers."
+        )
+    if artifact_summary["audio"]:
+        focus.append(
+            f"{artifact_summary['audio']} audio artifact(s) are ready for playback or "
+            "bounded audio analyzers."
+        )
+    if protocol_counts.get("rtp"):
+        focus.append(
+            "VoIP/RTP traffic detected: correlate SIP/SDP, reconstruct both audio "
+            "directions, and treat telephone-event packets as possible DTMF."
+        )
+    if protocol_counts.get("rtpevent"):
+        focus.append(
+            f"{protocol_counts['rtpevent']} RTP telephone-event packet(s) need DTMF review."
+        )
+    if protocol_counts.get("snmp"):
+        focus.append(
+            "SNMP traffic detected: inspect community/OID request-response pairs and "
+            "search bounded variable-binding text."
+        )
+    if dns_evidence:
+        focus.append(
+            f"{len(dns_evidence)} suspicious DNS encoded-label group(s) need framing "
+            "and ordering review; validated recovered files are listed as artifacts."
+        )
+    if tftp_evidence:
+        focus.append(
+            f"{len(tftp_evidence)} TFTP transfer(s) reconstructed; review incomplete "
+            "block states and never execute transferred packages."
+        )
+    open_tasks = sum(
+        1 for task in items("manual_tasks") if task.get("state") == "open"
+    )
+    if open_tasks:
+        focus.append(f"{open_tasks} open manual-review task(s) in the queue.")
+    events = items("events")
+    if events:
+        focus.append(f"{len(events)} behavior event(s) on the WebShell timeline.")
+    return {
+        "behaviors": behaviors,
+        "candidate_summary": candidate_summary,
+        "artifact_summary": artifact_summary,
+        "suggested_focus": focus,
+    }

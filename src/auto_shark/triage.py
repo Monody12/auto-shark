@@ -39,6 +39,7 @@ PLACEHOLDERS = {
 }
 HEX_VALUE = re.compile(r"[0-9a-fA-F]+")
 BASE64_VALUE = re.compile(r"[A-Za-z0-9+/_-]+={0,2}")
+KNOWN_PREFIX = re.compile(r"^\{?(flag|ctf|key|answer)(?:\{|[:=])", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -147,6 +148,12 @@ def _current_inputs(database: Database) -> tuple[_TriageInput, ...]:
                b.id,b.sha256,b.byte_length,b.relative_path
         FROM tcp_reconstruction tr JOIN evidence e ON e.id=tr.evidence_id
         JOIN blob b ON b.id=e.blob_id
+        UNION
+        SELECT e.id,e.evidence_id,e.capture_id,e.protocol_message_id,e.transaction_id,
+               e.source_kind,'evidence',e.frame_start,e.frame_end,e.direction,
+               b.id,b.sha256,b.byte_length,b.relative_path
+        FROM evidence e JOIN blob b ON b.id=e.blob_id
+        WHERE e.source_kind='tftp-data' AND b.complete=1
         ORDER BY evidence_public_id,input_kind,blob_sha256
     """
     with database.connect() as connection:
@@ -388,7 +395,8 @@ def _persist_known_match(
                 "SELECT id FROM evidence WHERE evidence_id=?", (match_public_id,)
             ).fetchone()[0]
         )
-        prefix = value.split("{", 1)[0].lower()
+        prefix_match = KNOWN_PREFIX.match(value)
+        prefix = prefix_match.group(1).lower() if prefix_match else ""
         score = 100.0 if prefix == "flag" else 95.0
         return _upsert_candidate(
             connection,

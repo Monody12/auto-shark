@@ -1,4 +1,5 @@
 import json
+from types import SimpleNamespace
 
 from auto_shark import cli
 from auto_shark.detectors import ProjectDetectionSummary
@@ -80,6 +81,54 @@ def test_triage_cli_reports_invalid_limits(capsys, tmp_path) -> None:
     assert "triage limits must be positive" in capsys.readouterr().err
 
 
+def test_cli_reports_runtime_tool_failures_without_a_traceback(
+    monkeypatch, capsys, tmp_path
+) -> None:
+    def fail(*_args, **_kwargs):
+        raise RuntimeError("synthetic external tool failure")
+
+    monkeypatch.setattr(cli, "triage_project", fail)
+
+    assert cli.main(["triage", str(tmp_path)]) == 2
+    assert capsys.readouterr().err == "error: synthetic external tool failure\n"
+
+
+def test_specialized_cli_stages_refresh_manual_queue(monkeypatch, capsys, tmp_path) -> None:
+    project = tmp_path / "sample.auto-shark"
+    executable = tmp_path / "tshark.exe"
+    executable.write_bytes(b"")
+    events = []
+    monkeypatch.setattr(cli, "find_tshark", lambda _path: executable)
+    monkeypatch.setattr(
+        cli,
+        "rebuild_manual_queue",
+        lambda value: events.append(("queue", value)),
+    )
+
+    for command, function_name in (
+        ("voip-extract", "extract_voip_audio"),
+        ("tcp-urgent", "triage_tcp_urgent"),
+        ("usb-hid", "triage_usb_hid"),
+    ):
+
+        def fake_stage(value, tshark, _name=function_name, **_limits):
+            events.append((_name, value, tshark))
+            return SimpleNamespace(to_json=lambda: json.dumps({"stage": _name}) + "\n")
+
+        monkeypatch.setattr(cli, function_name, fake_stage)
+        assert cli.main([command, str(project), "--tshark", str(executable)]) == 0
+
+    assert events == [
+        ("extract_voip_audio", project, executable),
+        ("queue", project),
+        ("triage_tcp_urgent", project, executable),
+        ("queue", project),
+        ("triage_usb_hid", project, executable),
+        ("queue", project),
+    ]
+    assert capsys.readouterr().out.count('"stage"') == 3
+
+
 def test_investigation_cli_commands_forward_values(monkeypatch, capsys, tmp_path) -> None:
     calls = []
     project = tmp_path / "sample.auto-shark"
@@ -115,40 +164,52 @@ def test_investigation_cli_commands_forward_values(monkeypatch, capsys, tmp_path
     monkeypatch.setattr(cli, "update_note", fake_update)
     monkeypatch.setattr(cli, "query_notes", fake_query)
 
-    assert cli.main(
-        ["review-mark", str(project), "candidate", "candidate-1", "--state", "key_evidence"]
-    ) == 0
-    assert cli.main(
-        [
-            "note-add",
-            str(project),
-            "candidate",
-            "candidate-1",
-            "--body",
-            "first",
-            "--max-note-bytes",
-            "7",
-        ]
-    ) == 0
-    assert cli.main(
-        ["note-update", str(project), "note-1", "--body", "second", "--max-note-bytes", "11"]
-    ) == 0
-    assert cli.main(
-        [
-            "notes",
-            str(project),
-            "--subject-kind",
-            "candidate",
-            "--subject-id",
-            "candidate-1",
-            "--offset",
-            "1",
-            "--limit",
-            "2",
-            "--max-body-bytes",
-            "13",
-        ]
-    ) == 0
+    assert (
+        cli.main(
+            ["review-mark", str(project), "candidate", "candidate-1", "--state", "key_evidence"]
+        )
+        == 0
+    )
+    assert (
+        cli.main(
+            [
+                "note-add",
+                str(project),
+                "candidate",
+                "candidate-1",
+                "--body",
+                "first",
+                "--max-note-bytes",
+                "7",
+            ]
+        )
+        == 0
+    )
+    assert (
+        cli.main(
+            ["note-update", str(project), "note-1", "--body", "second", "--max-note-bytes", "11"]
+        )
+        == 0
+    )
+    assert (
+        cli.main(
+            [
+                "notes",
+                str(project),
+                "--subject-kind",
+                "candidate",
+                "--subject-id",
+                "candidate-1",
+                "--offset",
+                "1",
+                "--limit",
+                "2",
+                "--max-body-bytes",
+                "13",
+            ]
+        )
+        == 0
+    )
 
     assert calls == [
         ("review", project, "candidate", "candidate-1", "key_evidence"),
@@ -244,24 +305,27 @@ def test_export_cli_forwards_report_and_evidence_limits(monkeypatch, capsys, tmp
         return ExportSummary("auto-shark.export/v1", str(output), "r", "h", 0, 0, 0, ())
 
     monkeypatch.setattr(cli, "export_bundle", fake_export)
-    assert cli.main(
-        [
-            "export",
-            str(project),
-            str(destination),
-            "--no-evidence",
-            "--max-evidence-items",
-            "7",
-            "--max-evidence-item-bytes",
-            "11",
-            "--max-evidence-total-bytes",
-            "13",
-            "--max-events",
-            "17",
-            "--max-detail-bytes",
-            "19",
-        ]
-    ) == 0
+    assert (
+        cli.main(
+            [
+                "export",
+                str(project),
+                str(destination),
+                "--no-evidence",
+                "--max-evidence-items",
+                "7",
+                "--max-evidence-item-bytes",
+                "11",
+                "--max-evidence-total-bytes",
+                "13",
+                "--max-events",
+                "17",
+                "--max-detail-bytes",
+                "19",
+            ]
+        )
+        == 0
+    )
     assert received == {
         "project": project,
         "output": destination,
@@ -328,6 +392,10 @@ def test_detect_cli_forwards_unknown_candidate_limits(monkeypatch, capsys, tmp_p
             "53",
             "--max-webshell-value-bytes",
             "59",
+            "--max-ognl-fields",
+            "61",
+            "--max-ognl-body-bytes",
+            "67",
         ]
     )
 
@@ -348,6 +416,8 @@ def test_detect_cli_forwards_unknown_candidate_limits(monkeypatch, capsys, tmp_p
         "max_preview_bytes": 47,
         "max_webshell_fields": 53,
         "max_webshell_value_bytes": 59,
+        "max_ognl_fields": 61,
+        "max_ognl_body_bytes": 67,
     }
     assert json.loads(capsys.readouterr().out)["schema_version"] == "auto-shark.detect/v1"
 
@@ -460,6 +530,7 @@ def test_timeline_cli_forwards_filters_and_limits(monkeypatch, capsys, tmp_path)
     assert result == 0
     assert received == {
         "project": project,
+        "detector": "static-webshell-activity",
         "event_kind": "file-read",
         "status": "complete",
         "frame_start": 10,

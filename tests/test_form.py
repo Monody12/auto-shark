@@ -12,6 +12,9 @@ def test_form_parser_preserves_order_duplicates_and_offsets() -> None:
         ("a", b""),
     ]
     assert data[fields[1].raw_offset : fields[1].raw_offset + fields[1].raw_length] == b"%41%42"
+    assert data[
+        fields[1].raw_name_offset : fields[1].raw_name_offset + fields[1].raw_name_length
+    ] == b"b"
 
 
 def test_form_parser_enforces_field_limit() -> None:

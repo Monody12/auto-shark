@@ -243,7 +243,12 @@ def test_webshell_detection_persists_timeline_payload_and_semantic_duplicates(tm
     assert event_runs == 8 and finding_runs == 2
 
     timeline = query_timeline(root, max_evidence_links=2, max_detail_bytes=5)
-    expanded = query_timeline(root, include_duplicates=True, event_kind="directory-listing")
+    expanded = query_timeline(
+        root,
+        include_duplicates=True,
+        event_kind="directory-listing",
+        detector="static-webshell-activity",
+    )
     findings = query_findings(root, max_evidence_links=2, max_detail_bytes=5)
     assert timeline.total == timeline.count == 3
     assert expanded.total == expanded.count == 2
