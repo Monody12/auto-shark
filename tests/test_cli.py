@@ -93,6 +93,50 @@ def test_cli_reports_runtime_tool_failures_without_a_traceback(
     assert capsys.readouterr().err == "error: synthetic external tool failure\n"
 
 
+def test_analyze_cli_forwards_loaded_tls_rsa_key(monkeypatch, capsys, tmp_path) -> None:
+    capture = tmp_path / "capture.pcap"
+    capture.write_bytes(b"pcap")
+    executable = tmp_path / "tshark.exe"
+    executable.write_bytes(b"")
+    key_path = tmp_path / "challenge.pem"
+    key_path.write_bytes(b"synthetic key")
+    received = {}
+
+    def fake_analyze(capture_path, project, tshark, **options):
+        received.update(
+            capture=capture_path,
+            project=project,
+            tshark=tshark,
+            **options,
+        )
+        return SimpleNamespace(to_json=lambda: '{"status":"ok"}')
+
+    monkeypatch.setattr(cli, "find_tshark", lambda _path: executable)
+    monkeypatch.setattr(cli, "analyze_http", fake_analyze)
+    project = tmp_path / "case.auto-shark"
+
+    result = cli.main(
+        [
+            "analyze",
+            str(capture),
+            "--project",
+            str(project),
+            "--tshark",
+            str(executable),
+            "--tls-rsa-key",
+            str(key_path),
+        ]
+    )
+
+    assert result == 0
+    assert received["capture"] == capture
+    assert received["project"] == project
+    assert received["tshark"] == executable
+    assert received["tls_rsa_key"].path == key_path.resolve()
+    assert len(received["tls_rsa_key"].sha256) == 64
+    assert json.loads(capsys.readouterr().out) == {"status": "ok"}
+
+
 def test_specialized_cli_stages_refresh_manual_queue(monkeypatch, capsys, tmp_path) -> None:
     project = tmp_path / "sample.auto-shark"
     executable = tmp_path / "tshark.exe"

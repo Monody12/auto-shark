@@ -33,6 +33,26 @@ def _clean_hex(chunk: bytes) -> bytes:
     return bytes(value for value in chunk if value in _HEX_DIGITS)
 
 
+def _strip_ignored_tokens(
+    data: bytes, tokens: tuple[bytes, ...], *, final: bool
+) -> tuple[bytes, bytes]:
+    if not tokens:
+        return data, b""
+    output = bytearray()
+    index = 0
+    while index < len(data):
+        token = next((item for item in tokens if data.startswith(item, index)), None)
+        if token is not None:
+            index += len(token)
+            continue
+        remainder = data[index:]
+        if not final and any(item.startswith(remainder) for item in tokens):
+            return bytes(output), remainder
+        output.append(data[index])
+        index += 1
+    return bytes(output), b""
+
+
 def run_hex_to_file(
     argv: Sequence[str],
     target: BinaryIO,
@@ -42,12 +62,15 @@ def run_hex_to_file(
     stderr_limit: int,
     cwd: Optional[Path] = None,
     environment: Optional[Mapping[str, str]] = None,
+    ignored_tokens: tuple[bytes, ...] = (),
 ) -> HexStreamResult:
     """Run a command and incrementally decode its hexadecimal stdout."""
     if not argv:
         raise ValueError("argv cannot be empty")
     if timeout_seconds <= 0 or max_decoded_bytes <= 0 or stderr_limit < 0:
         raise ValueError("invalid hexadecimal stream limit")
+    if any(not token for token in ignored_tokens):
+        raise ValueError("ignored hexadecimal stream tokens cannot be empty")
     process = subprocess.Popen(
         [str(item) for item in argv],
         cwd=str(cwd) if cwd else None,
@@ -86,6 +109,7 @@ def run_hex_to_file(
     stderr_thread.start()
     timeout_thread.start()
     carry = b""
+    raw_carry = b""
     decoded_bytes = 0
     limit_truncated = False
     caught: Optional[BaseException] = None
@@ -94,7 +118,10 @@ def run_hex_to_file(
             raw = process.stdout.read(64 * 1024)
             if not raw:
                 break
-            cleaned = carry + _clean_hex(raw)
+            cleanable, raw_carry = _strip_ignored_tokens(
+                raw_carry + raw, ignored_tokens, final=False
+            )
+            cleaned = carry + _clean_hex(cleanable)
             even_length = len(cleaned) - (len(cleaned) % 2)
             carry = cleaned[even_length:]
             if even_length == 0:
@@ -109,8 +136,22 @@ def run_hex_to_file(
                 break
             target.write(decoded)
             decoded_bytes += len(decoded)
-        if carry and not limit_truncated:
-            raise ValueError("hex stream ended with an incomplete byte")
+        cleanable, raw_carry = _strip_ignored_tokens(raw_carry, ignored_tokens, final=True)
+        cleaned = carry + _clean_hex(cleanable)
+        if cleaned:
+            if len(cleaned) % 2:
+                raise ValueError("hex stream ended with an incomplete byte")
+            decoded = bytes.fromhex(cleaned.decode("ascii"))
+            remaining = max_decoded_bytes - decoded_bytes
+            if len(decoded) > remaining:
+                target.write(decoded[:remaining])
+                decoded_bytes += remaining
+                limit_truncated = True
+            else:
+                target.write(decoded)
+                decoded_bytes += len(decoded)
+        if raw_carry:
+            raise ValueError("hex stream ended with an incomplete ignored token")
         process.wait()
     except BaseException as error:
         caught = error

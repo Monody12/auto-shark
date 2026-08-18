@@ -68,3 +68,15 @@ def test_parse_http_line_rejects_wrong_column_count() -> None:
 def test_tshark_filter_excludes_udp_ssdp_requests() -> None:
     arguments = tshark_http_arguments(Path("tshark"), Path("capture.pcap"))
     assert "tcp && (http.request || http.response)" in arguments
+
+
+def test_tshark_http_arguments_include_explicit_preferences() -> None:
+    preference = 'uat:rsa_keys:"C:/challenge/key.pem",""'
+
+    arguments = tshark_http_arguments(
+        Path("tshark"),
+        Path("capture.pcap"),
+        preferences=("-o", preference),
+    )
+
+    assert arguments[4:6] == ["-o", preference]

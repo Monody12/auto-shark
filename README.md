@@ -41,6 +41,22 @@ uv run auto-shark export   "$env:LOCALAPPDATA\AutoShark\projects\case1.auto-shar
   "$env:LOCALAPPDATA\AutoShark\exports\case1"
 ```
 
+For a challenge capture that provides a server private key and uses a
+compatible legacy RSA key exchange, pass the key explicitly so decrypted HTTP
+re-enters the same body, scan, and detector pipeline:
+
+```powershell
+uv run auto-shark analyze legacy-tls.pcap `
+  --project "$env:LOCALAPPDATA\AutoShark\projects\legacy-tls.auto-shark" `
+  --tls-rsa-key challenge-server.pem --with-bodies --scan
+uv run auto-shark detect `
+  "$env:LOCALAPPDATA\AutoShark\projects\legacy-tls.auto-shark"
+```
+
+The key is bounded to 1 MiB and read only. Auto-Shark records its SHA-256 and
+byte length, but does not copy the key or persist its local path. A server RSA
+key cannot decrypt ECDHE or TLS 1.3 sessions.
+
 Or do the same from the Windows GUI (`--extra gui` required):
 
 ```powershell
@@ -75,7 +91,9 @@ reproducing a support report.
 ## What each stage records
 
 - `analyze --with-bodies --scan`: HTTP metadata pairing, bounded body
-  extraction, URL/Base64/hex transform lineage, static file carving.
+  extraction, URL/Base64/hex transform lineage, static file carving. Add
+  `--tls-rsa-key` only for a challenge-provided key and compatible legacy RSA
+  TLS traffic.
 - `triage`: known-format and authentication-field candidates with exact byte
   ranges and versioned score signals.
 - `detect`: unknown flag-like candidates, multi-signal SQL-injection events,

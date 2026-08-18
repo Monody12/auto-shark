@@ -14,6 +14,8 @@ from .search import ByteMatch, find_flag_matches
 from .storage import BlobStore, Database
 from .transforms import decode_recognized, parse_urlencoded_form
 
+MAX_RECOGNIZED_TRANSFORM_DEPTH = 8
+
 
 @dataclass(frozen=True)
 class ScanSummary:
@@ -271,8 +273,93 @@ def scan_project(
     field_count = 0
     transform_count = 0
     total_output = 0
+
+    def persist_recognized_chain(
+        value: bytes,
+        *,
+        parent_evidence_id: int,
+        parent_public_id: str,
+        protocol_message_id: int,
+        frame_number: int,
+        field_name: Optional[str],
+        depth: int,
+    ) -> None:
+        nonlocal total_output, transform_count
+        if depth > MAX_RECOGNIZED_TRANSFORM_DEPTH:
+            return
+        recognized = decode_recognized(value, max_output_bytes=max_transform_output_bytes)
+        if (
+            recognized is None
+            or total_output + len(recognized.output) > max_transform_total_bytes
+        ):
+            return
+        total_output += len(recognized.output)
+        output_blob_id = _store_blob(database, project.root, recognized.output)
+        output_locator = EvidenceLocator(
+            capture_sha256=project.capture_sha256,
+            source_kind="transform-output",
+            frame_start=frame_number,
+            frame_end=frame_number,
+            protocol_message=parent_public_id,
+            byte_length=len(recognized.output),
+            field_name=field_name,
+        )
+        output_evidence_id, output_public_id = _store_evidence(
+            database,
+            capture_db_id=capture_db_id,
+            protocol_message_id=protocol_message_id,
+            locator=output_locator,
+            blob_id=output_blob_id,
+            text_value=(
+                recognized.output.decode("utf-8", errors="replace")
+                if len(recognized.output) <= 4096
+                else None
+            ),
+        )
+        _store_transform(
+            database,
+            parent_evidence_id=parent_evidence_id,
+            output_evidence_id=output_evidence_id,
+            parent_public_id=parent_public_id,
+            name=recognized.transform,
+            version=recognized.version,
+            parameters=recognized.parameters,
+            depth=depth,
+        )
+        transform_count += 1
+        output_row = {
+            "relative_path": _blob_path_for_evidence(database, output_evidence_id),
+            "evidence_db_id": output_evidence_id,
+            "evidence_public_id": output_public_id,
+        }
+        _scan_evidence(database, project.root, project.capture_sha256, output_row)
+        persist_recognized_chain(
+            recognized.output,
+            parent_evidence_id=output_evidence_id,
+            parent_public_id=output_public_id,
+            protocol_message_id=protocol_message_id,
+            frame_number=frame_number,
+            field_name=field_name,
+            depth=depth + 1,
+        )
+
     for body in bodies:
         _scan_evidence(database, project.root, project.capture_sha256, body)
+        raw_body: Optional[bytes] = None
+        if (
+            body["body_status"] == "complete"
+            and int(body["body_byte_length"]) <= max_transform_output_bytes
+        ):
+            raw_body = (project.root / body["relative_path"]).read_bytes()
+            persist_recognized_chain(
+                raw_body,
+                parent_evidence_id=int(body["evidence_db_id"]),
+                parent_public_id=str(body["evidence_public_id"]),
+                protocol_message_id=int(body["protocol_message_id"]),
+                frame_number=int(body["representative_frame"]),
+                field_name=None,
+                depth=1,
+            )
         if (
             not str(body["content_type"] or "")
             .lower()
@@ -283,7 +370,8 @@ def scan_project(
             continue
         if int(body["body_byte_length"]) > max_form_input_bytes:
             continue
-        raw_body = (project.root / body["relative_path"]).read_bytes()
+        if raw_body is None:
+            raw_body = (project.root / body["relative_path"]).read_bytes()
         for field in parse_urlencoded_form(raw_body):
             field_count += 1
             raw_locator = EvidenceLocator(
@@ -366,54 +454,15 @@ def scan_project(
                 "evidence_public_id": decoded_public_id,
             }
             _scan_evidence(database, project.root, project.capture_sha256, decoded_row)
-            recognized = decode_recognized(
-                field.decoded_value, max_output_bytes=max_transform_output_bytes
-            )
-            if (
-                recognized is None
-                or total_output + len(recognized.output) > max_transform_total_bytes
-            ):
-                continue
-            total_output += len(recognized.output)
-            output_blob_id = _store_blob(database, project.root, recognized.output)
-            output_locator = EvidenceLocator(
-                capture_sha256=project.capture_sha256,
-                source_kind="transform-output",
-                frame_start=int(body["representative_frame"]),
-                frame_end=int(body["representative_frame"]),
-                protocol_message=decoded_public_id,
-                byte_length=len(recognized.output),
-                field_name=field.name,
-            )
-            output_evidence_id, output_public_id = _store_evidence(
-                database,
-                capture_db_id=capture_db_id,
-                protocol_message_id=int(body["protocol_message_id"]),
-                locator=output_locator,
-                blob_id=output_blob_id,
-                text_value=(
-                    recognized.output.decode("utf-8", errors="replace")
-                    if len(recognized.output) <= 4096
-                    else None
-                ),
-            )
-            _store_transform(
-                database,
+            persist_recognized_chain(
+                field.decoded_value,
                 parent_evidence_id=decoded_evidence_id,
-                output_evidence_id=output_evidence_id,
                 parent_public_id=decoded_public_id,
-                name=recognized.transform,
-                version=recognized.version,
-                parameters=recognized.parameters,
+                protocol_message_id=int(body["protocol_message_id"]),
+                frame_number=int(body["representative_frame"]),
+                field_name=field.name,
                 depth=2,
             )
-            transform_count += 1
-            output_row = {
-                "relative_path": _blob_path_for_evidence(database, output_evidence_id),
-                "evidence_db_id": output_evidence_id,
-                "evidence_public_id": output_public_id,
-            }
-            _scan_evidence(database, project.root, project.capture_sha256, output_row)
     with database.connect() as connection:
         candidates = tuple(
             str(row[0])

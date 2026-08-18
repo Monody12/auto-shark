@@ -151,7 +151,7 @@ def _discover_streams(
                 run_public_id,
                 capabilities.version_line,
                 json.dumps(argv, ensure_ascii=False),
-                capabilities.to_json(),
+                capabilities.to_provenance_json(),
                 _utc_now(),
             ),
         )

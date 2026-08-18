@@ -170,3 +170,15 @@ all exit criteria are verified and recorded in `PROJECT_STATE.md`.
   code: bounded HTTP detail output, verified Blob reads, side-channel tool-run
   provenance, RTP conflict handling, incomplete TCP reconstruction coverage,
   stale manual-task filtering, SFTP batch cleanup, and frozen adapter inclusion.
+
+## Post-v0.2.0 corpus hardening (active)
+
+- Bounded HTTP body batching, compact repeated TShark provenance, recursive
+  complete-body transforms, and stricter known/unknown candidate boundaries are
+  implemented in the working tree from real NewStarCTF and SimpleFlow samples.
+- The CLI accepts an explicit, bounded challenge-provided RSA private key for
+  compatible legacy TLS sessions. Decrypted HTTP reuses the normal pairing,
+  body, scan, and detector pipeline; persisted provenance records only the key
+  SHA-256/size and a redacted argument, never the key bytes or local path.
+- A GUI key-selection surface and structured SMTP/MIME attachment recovery are
+  pending separate slices. ECDHE, TLS 1.3, and key-log input remain unsupported.

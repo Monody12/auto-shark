@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 FLAG_PATTERN = re.compile(
-    rb"(?i:(?:flag|ctf|key|answer)\{[^{}\r\n]{1,256}\}"
+    rb"(?i:(?<![A-Za-z0-9_])(?:flag|ctf|key|answer)\{[^{}\r\n]{1,256}\}"
     rb"|\{(?:flag|ctf|key|answer)[:=][^{}\r\n]{1,256}\}"
     rb"|(?<![A-Za-z0-9_])(?:flag|ctf|key|answer)[:=]"
     rb"[A-Za-z0-9][A-Za-z0-9_.+/-]{7,255}(?![A-Za-z0-9_.+/-]))"

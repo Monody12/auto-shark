@@ -286,7 +286,7 @@ def triage_tcp_urgent(
                 "tshark-tcp-urgent-triage",
                 capabilities.version_line,
                 json.dumps(argv, ensure_ascii=False),
-                capabilities.to_json(),
+                capabilities.to_provenance_json(),
                 _now(),
             ),
         )

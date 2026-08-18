@@ -5,7 +5,7 @@ import pytest
 from auto_shark.engines.hexstream import run_hex_to_file
 
 
-def _run(tmp_path, source: str, limit: int = 100):
+def _run(tmp_path, source: str, limit: int = 100, ignored_tokens=()):
     output = tmp_path / "output.bin"
     with output.open("wb") as target:
         result = run_hex_to_file(
@@ -14,6 +14,7 @@ def _run(tmp_path, source: str, limit: int = 100):
             timeout_seconds=5,
             max_decoded_bytes=limit,
             stderr_limit=100,
+            ignored_tokens=ignored_tokens,
         )
     return result, output.read_bytes()
 
@@ -30,6 +31,22 @@ def test_hex_stream_enforces_decoded_limit(tmp_path) -> None:
     assert data == b"ABC"
     assert result.decoded_bytes == 3
     assert result.limit_truncated
+
+
+def test_hex_stream_ignores_only_explicit_complete_tokens(tmp_path) -> None:
+    result, data = _run(
+        tmp_path,
+        "41<MISSING>42\n<MISSING>43",
+        ignored_tokens=(b"<MISSING>",),
+    )
+
+    assert data == b"ABC"
+    assert result.decoded_bytes == 3
+
+
+def test_hex_stream_rejects_incomplete_ignored_token(tmp_path) -> None:
+    with pytest.raises(ValueError):
+        _run(tmp_path, "41<MISS", ignored_tokens=(b"<MISSING>",))
 
 
 @pytest.mark.parametrize("source", ["4", "41zz"])

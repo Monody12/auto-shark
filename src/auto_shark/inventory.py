@@ -604,7 +604,7 @@ def index_summary(
                 "tshark",
                 capabilities.version_line,
                 json.dumps(argv, ensure_ascii=False),
-                capabilities.to_json(),
+                capabilities.to_provenance_json(),
                 started_at,
             ),
         )

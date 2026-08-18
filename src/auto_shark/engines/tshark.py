@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -11,6 +12,8 @@ from pathlib import Path
 from typing import Optional
 
 from .process import ProcessResult, run_bounded
+
+TLS_RSA_KEY_MAX_BYTES = 1024 * 1024
 
 CORE_FIELDS = frozenset(
     {
@@ -86,6 +89,53 @@ FEATURE_FIELDS = {
 
 
 @dataclass(frozen=True)
+class TlsRsaKey:
+    path: Path
+    byte_length: int
+    sha256: str
+
+    @property
+    def preference_value(self) -> str:
+        return f'uat:rsa_keys:"{self.path.as_posix()}",""'
+
+    @property
+    def arguments(self) -> tuple[str, str]:
+        return ("-o", self.preference_value)
+
+    def redact_argv(self, argv: Sequence[str]) -> list[str]:
+        replacement = (
+            'uat:rsa_keys:"<redacted '
+            f'sha256={self.sha256} bytes={self.byte_length}>",""'
+        )
+        return [replacement if value == self.preference_value else value for value in argv]
+
+
+def load_tls_rsa_key(path: Path) -> TlsRsaKey:
+    resolved = Path(path).expanduser().resolve()
+    if not resolved.is_file():
+        raise FileNotFoundError(str(resolved))
+    byte_length = resolved.stat().st_size
+    if byte_length <= 0:
+        raise ValueError("TLS RSA private key is empty")
+    if byte_length > TLS_RSA_KEY_MAX_BYTES:
+        raise ValueError(f"TLS RSA private key exceeds {TLS_RSA_KEY_MAX_BYTES} bytes")
+    preference_path = resolved.as_posix()
+    if any(character in preference_path for character in ('"', "\r", "\n")):
+        raise ValueError("TLS RSA private key path contains unsupported characters")
+    digest = hashlib.sha256()
+    bytes_read = 0
+    with resolved.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(64 * 1024), b""):
+            bytes_read += len(chunk)
+            if bytes_read > TLS_RSA_KEY_MAX_BYTES:
+                raise ValueError(f"TLS RSA private key exceeds {TLS_RSA_KEY_MAX_BYTES} bytes")
+            digest.update(chunk)
+    if bytes_read != byte_length:
+        raise ValueError("TLS RSA private key changed while it was being read")
+    return TlsRsaKey(resolved, byte_length, digest.hexdigest())
+
+
+@dataclass(frozen=True)
 class TsharkCapabilities:
     executable: str
     version_line: str
@@ -99,6 +149,38 @@ class TsharkCapabilities:
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=False, sort_keys=True, indent=2)
+
+    def to_provenance_json(self, *, tls_rsa_key: Optional[TlsRsaKey] = None) -> str:
+        """Return a compact, stable snapshot suitable for repeated tool runs."""
+
+        def registry(values: tuple[str, ...]) -> dict[str, object]:
+            digest = hashlib.sha256()
+            for value in values:
+                encoded = value.encode("utf-8")
+                digest.update(len(encoded).to_bytes(8, "big"))
+                digest.update(encoded)
+            return {"count": len(values), "sha256": digest.hexdigest()}
+
+        payload = {
+            "schema_version": "auto-shark.tshark-capability/v1",
+            "executable": self.executable,
+            "version_line": self.version_line,
+            "registries": {
+                "fields": registry(self.fields),
+                "protocols": registry(self.protocols),
+                "export_objects": registry(self.export_objects),
+            },
+            "features": dict(sorted(self.features.items())),
+            "missing_core_fields": self.missing_core_fields,
+            "usable": self.usable,
+            "errors": self.errors,
+        }
+        if tls_rsa_key is not None:
+            payload["tls_rsa_key"] = {
+                "byte_length": tls_rsa_key.byte_length,
+                "sha256": tls_rsa_key.sha256,
+            }
+        return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
 def find_tshark(explicit: Optional[Path] = None) -> Optional[Path]:

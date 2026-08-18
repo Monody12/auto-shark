@@ -15,7 +15,7 @@ from .body import extract_http_body
 from .config import Settings
 from .detectors import detect_project
 from .dns import triage_dns_tunnels
-from .engines.tshark import find_tshark, probe_tshark
+from .engines.tshark import find_tshark, load_tls_rsa_key, probe_tshark
 from .exporting import ExportLimits, export_bundle
 from .files.carve import carve_project
 from .ftp import index_ftp
@@ -108,6 +108,11 @@ def _parser() -> argparse.ArgumentParser:
     analyze.add_argument("capture", type=Path)
     analyze.add_argument("--project", required=True, type=Path)
     analyze.add_argument("--tshark", type=Path, help="explicit path to tshark executable")
+    analyze.add_argument(
+        "--tls-rsa-key",
+        type=Path,
+        help="challenge-provided private key for compatible legacy RSA TLS sessions",
+    )
     analyze.add_argument("--uri", help="also count transactions with this exact request URI")
     analyze.add_argument("--with-bodies", action="store_true")
     analyze.add_argument("--scan", action="store_true", help="scan bodies after extraction")
@@ -119,6 +124,11 @@ def _parser() -> argparse.ArgumentParser:
     extract.add_argument("project", type=Path)
     extract.add_argument("frame", type=int)
     extract.add_argument("--tshark", type=Path, help="explicit path to tshark executable")
+    extract.add_argument(
+        "--tls-rsa-key",
+        type=Path,
+        help="challenge-provided private key for compatible legacy RSA TLS sessions",
+    )
     extract.add_argument("--max-bytes", type=int, default=16 * 1024 * 1024)
 
     scan = commands.add_parser("scan", help="scan extracted evidence and apply bounded transforms")
@@ -1065,6 +1075,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     args.frame,
                     executable,
                     max_body_bytes=args.max_bytes,
+                    tls_rsa_key=(
+                        load_tls_rsa_key(args.tls_rsa_key) if args.tls_rsa_key else None
+                    ),
                 ).to_json()
             )
             return 0
@@ -1079,6 +1092,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 return 2
             if args.scan and not args.with_bodies:
                 raise ValueError("--scan requires --with-bodies")
+            tls_rsa_key = load_tls_rsa_key(args.tls_rsa_key) if args.tls_rsa_key else None
             if args.with_bodies:
                 result = analyze_with_bodies(
                     args.capture,
@@ -1088,6 +1102,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     max_body_bytes=args.max_body_bytes,
                     max_total_bytes=args.max_body_total,
                     run_scan=args.scan,
+                    tls_rsa_key=tls_rsa_key,
                 )
             else:
                 result = analyze_http(
@@ -1095,6 +1110,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     args.project,
                     executable,
                     matching_uri=args.uri,
+                    tls_rsa_key=tls_rsa_key,
                 )
             if args.with_bodies:
                 print(result.to_json(verbose_bodies=args.verbose_bodies))

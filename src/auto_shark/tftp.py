@@ -761,7 +761,7 @@ def _record_tool_start(
                 tool_name,
                 capabilities.version_line,
                 json.dumps(argv, ensure_ascii=False),
-                capabilities.to_json(),
+                capabilities.to_provenance_json(),
                 _now(),
             ),
         )

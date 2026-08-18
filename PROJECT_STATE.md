@@ -1026,3 +1026,89 @@ manifest (`file`, `strings`, or `zsteg`) remain useful follow-up validation.
   and sdist `5c0a8d3fa104d0c782edd43a8826d9d3f35f5440ac1d9e06c9b13b23e7c45e2d`.
   The downloaded wheel/runtime contents, portable CLI probe, adapter, and
   offscreen GUI startup all pass.
+
+## 2026-08-18 HTTP body regression hardening checkpoint
+
+- Real NewStarCTF and BUUCTF SimpleFlow samples exposed four generalized
+  defects after v0.2.0: repeated full TShark capability JSON expanded a
+  1.2 MiB capture project to about 3.0 GB; complete non-form HTTP bodies did
+  not enter the transform chain; TShark's literal `<MISSING>` body value was
+  treated as malformed hexadecimal output; and PHP `else{...}` blocks were
+  accepted by the unknown-brace heuristic.
+- Repeated tool runs now retain a compact stable capability snapshot with
+  registry counts and SHA-256 digests. The complete NewStar runtime project
+  is 6,296,453 bytes instead of gigabytes; its per-run capability rows remain
+  below 2 KiB while the public probe JSON remains unchanged.
+- Complete HTTP bodies now enter a bounded recursive recognized transform
+  chain with a maximum depth of eight and the existing per-output/aggregate
+  byte budgets. NewStar response frame 2354 produces two Base64 transforms
+  (53 then 39 bytes) and independently yields the rank-99 known-format
+  candidate recorded by the adjacent solver oracle. Scan time over the
+  already-extracted 1,298-body project is about 0.28 seconds.
+- The hexadecimal stream decoder now ignores only caller-declared complete
+  tokens; HTTP extraction declares `<MISSING>`, while incomplete or other
+  non-hex input remains an error. A clean SimpleFlow project completes all 26
+  body tasks: 23 complete and three absent, including frames 21 and 95 as
+  zero-byte absent bodies. It has zero unknown candidates after excluding
+  programming-language block prefixes, passes integrity/foreign-key checks,
+  and leaves `jobs` empty.
+- HTTP workflow extraction now groups at most 512 selected frames per TShark
+  process. Strict rows accept quoted hex plus both TShark empty forms (an empty
+  second column and `<MISSING>`), enforce per-body/total budgets, share compact
+  tool-run provenance, and fall back to the existing single-frame path on a
+  bounded batch failure. A 70,000-byte parser regression covers fields beyond
+  Python's default CSV limit without raising that global limit.
+- Clean batch project
+  `%LOCALAPPDATA%\AutoShark\projects\newstar-traffic-shark-batch3-20260818.auto-shark`
+  completed the full metadata/body/scan workflow in 18.992 seconds: 1,298 of
+  1,298 tasks completed, 684,240 bytes extracted, three transforms, and the
+  same known-format candidate. Its ordered frame/status/length/Blob digest is
+  `b4b1ce9f0402e7138f8d3fb7dc3ef1446f3665b6f28b6e0147f52607f0b8fad6`,
+  byte-identical to the pre-batch project. It uses one metadata plus three
+  batch TShark runs and occupies 3,658,629 bytes; integrity, foreign keys, and
+  empty jobs pass.
+- Clean batch SimpleFlow completed in 4.708 seconds with 26/26 body tasks,
+  50 transforms, one carved ZIP artifact, and zero unknown candidates. Final
+  Ruff, compileall, `uv build`, and `git diff --check` pass. Windows Python
+  3.11.15 plus real TShark 4.6.7 reports `284 passed`; Python 3.9.25 reports
+  `274 passed, 1 skipped` for the optional GUI extra.
+
+## 2026-08-18 legacy RSA TLS corpus checkpoint
+
+- Solved and archived DDCTF 2018 `流量分析` under the local practice corpus.
+  Capture SHA-256 is
+  `bf774b9e402dab2ffb479f876d4ef88a046df84c2730e48e56c7c58c52045e1d`.
+  The independent no-answer-constant solver, recovered challenge key,
+  certificate, SMTP evidence, 653-byte decrypted HTML, hashes, and Chinese
+  write-up are preserved beside the capture. All 12 SHA-256 manifest entries,
+  the original ZIP MD5, and solver compilation were reverified. The unrelated
+  FTP `sqlmap.zip` stream was neither exported nor analyzed.
+- The undecrypted baseline project
+  `%LOCALAPPDATA%\AutoShark\projects\ddctf2018-traffic-analysis-20260818-183146.auto-shark`
+  indexed all 10,183 frames, 23 protocol labels, and 2,321 conversations. It
+  correctly produced a priority-55 `tls-encrypted-traffic` task for eight TLS
+  frames and an unsupported SMTP task for 179 frames, but found no HTTP.
+- `analyze` and `extract-body` now accept `--tls-rsa-key` for a
+  challenge-provided key and compatible legacy RSA key exchange. Key files are
+  regular, nonempty, bounded to 1 MiB, and hashed before use. TShark receives
+  the RSA Keys UAT argument, while persisted tool arguments redact the local
+  path and retain only SHA-256/byte-length provenance. The key is never copied
+  into the project. ECDHE, TLS 1.3, and key-log input remain unsupported.
+- The known-format scanner now requires a left identifier boundary, preventing
+  `DDCTF{...}` from being incorrectly stored as the substring `CTF{...}`. The
+  existing generic unknown-brace detector preserves the complete vendor prefix
+  without an answer or contest-name constant.
+- Clean real project
+  `%LOCALAPPDATA%\AutoShark\projects\ddctf2018-tls-rsa-final-20260818-183902.auto-shark`
+  recovered one matched HTTP transaction at frames 10178/10179 and one complete
+  653-byte response Blob with SHA-256
+  `e2ffcf99d8b3878a8ed62c0d798891a0d5b4664e9f531f893b1277c968eaa5c8`.
+  `detect` recorded the complete rank-78 unknown-prefix candidate at response
+  offset 587. SQLite integrity/foreign keys, independent Blob rehash, redacted
+  key paths, completed tool runs, and an empty `jobs` directory all pass.
+- Final gates pass: Windows Python 3.11.15 with real TShark 4.6.7 reports
+  `292 passed`; Python 3.9.25 reports `282 passed, 1 skipped` for the optional
+  GUI extra. Ruff, compileall, `uv build`, and `git diff --check` pass.
+  Structured SMTP/MIME attachment recovery and a GUI TLS-key picker remain the
+  next independent feature slices. Do not publish this functional work as a
+  replacement 0.2.0 release.

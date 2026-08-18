@@ -9,11 +9,13 @@ from pathlib import Path
 from typing import Optional
 
 from .analysis import AnalysisSummary, analyze_http
-from .body import BodyExtractionSummary, extract_http_body
+from .body import BodyExtractionSummary, extract_http_bodies_batch, extract_http_body
 from .core.ids import stable_id
-from .engines.tshark import probe_tshark
+from .engines.tshark import TlsRsaKey, probe_tshark
 from .pipeline import ScanSummary, scan_project
 from .storage import Database
+
+HTTP_BODY_BATCH_SIZE = 512
 
 
 @dataclass(frozen=True)
@@ -145,6 +147,7 @@ def extract_selected_http_bodies(
     uri: Optional[str],
     max_body_bytes: int,
     max_total_bytes: int,
+    tls_rsa_key: Optional[TlsRsaKey] = None,
 ) -> BodyRunSummary:
     if max_body_bytes <= 0 or max_total_bytes <= 0:
         raise ValueError("body extraction budgets must be positive")
@@ -162,57 +165,119 @@ def extract_selected_http_bodies(
     failed = 0
     skipped = 0
     extracted = 0
-    for target in targets:
+    target_index = 0
+    while target_index < len(targets):
         if remaining <= 0:
+            for target in targets[target_index:]:
+                _upsert_task(
+                    database,
+                    capture_sha256,
+                    target,
+                    max_bytes=max_body_bytes,
+                    status="skipped-budget",
+                    error="total body extraction budget exhausted",
+                )
+                skipped += 1
+            break
+        batch = targets[target_index : target_index + HTTP_BODY_BATCH_SIZE]
+        for target in batch:
             _upsert_task(
                 database,
                 capture_sha256,
                 target,
-                max_bytes=max_body_bytes,
-                status="skipped-budget",
-                error="total body extraction budget exhausted",
+                max_bytes=min(max_body_bytes, remaining),
+                status="running",
             )
-            skipped += 1
-            continue
-        allocation = min(max_body_bytes, remaining)
-        _upsert_task(
-            database,
-            capture_sha256,
-            target,
-            max_bytes=allocation,
-            status="running",
-        )
         try:
-            summary = extract_http_body(
+            batch_summary = extract_http_bodies_batch(
                 project,
-                target.frame_number,
+                [target.frame_number for target in batch],
                 tshark,
-                max_body_bytes=allocation,
+                max_body_bytes=max_body_bytes,
+                max_total_bytes=remaining,
                 capabilities=capabilities,
+                tls_rsa_key=tls_rsa_key,
             )
-        except (OSError, TimeoutError, ValueError) as error:
+        except (OSError, TimeoutError, ValueError):
+            batch_summary = None
+
+        if batch_summary is not None:
+            targets_by_frame = {target.frame_number: target for target in batch}
+            for summary in batch_summary.statuses:
+                target = targets_by_frame[summary.frame_number]
+                allocation = min(max_body_bytes, remaining)
+                summaries.append(summary)
+                completed += 1
+                extracted += summary.extracted_length
+                remaining -= summary.extracted_length
+                _upsert_task(
+                    database,
+                    capture_sha256,
+                    target,
+                    max_bytes=allocation,
+                    status="completed",
+                    extracted_bytes=summary.extracted_length,
+                )
+            for frame_number in batch_summary.skipped_frames:
+                target = targets_by_frame[frame_number]
+                _upsert_task(
+                    database,
+                    capture_sha256,
+                    target,
+                    max_bytes=max_body_bytes,
+                    status="skipped-budget",
+                    error="total body extraction budget exhausted",
+                )
+                skipped += 1
+            target_index += len(batch)
+            continue
+
+        for target in batch:
+            if remaining <= 0:
+                _upsert_task(
+                    database,
+                    capture_sha256,
+                    target,
+                    max_bytes=max_body_bytes,
+                    status="skipped-budget",
+                    error="total body extraction budget exhausted",
+                )
+                skipped += 1
+                continue
+            allocation = min(max_body_bytes, remaining)
+            try:
+                summary = extract_http_body(
+                    project,
+                    target.frame_number,
+                    tshark,
+                    max_body_bytes=allocation,
+                    capabilities=capabilities,
+                    tls_rsa_key=tls_rsa_key,
+                )
+            except (OSError, TimeoutError, ValueError) as error:
+                _upsert_task(
+                    database,
+                    capture_sha256,
+                    target,
+                    max_bytes=allocation,
+                    status="failed",
+                    error=str(error)[:2000],
+                )
+                failed += 1
+                continue
+            summaries.append(summary)
+            completed += 1
+            extracted += summary.extracted_length
+            remaining -= summary.extracted_length
             _upsert_task(
                 database,
                 capture_sha256,
                 target,
                 max_bytes=allocation,
-                status="failed",
-                error=str(error)[:2000],
+                status="completed",
+                extracted_bytes=summary.extracted_length,
             )
-            failed += 1
-            continue
-        summaries.append(summary)
-        completed += 1
-        extracted += summary.extracted_length
-        remaining -= summary.extracted_length
-        _upsert_task(
-            database,
-            capture_sha256,
-            target,
-            max_bytes=allocation,
-            status="completed",
-            extracted_bytes=summary.extracted_length,
-        )
+        target_index += len(batch)
     return BodyRunSummary(
         selected=len(targets),
         completed=completed,
@@ -232,14 +297,22 @@ def analyze_with_bodies(
     max_body_bytes: int,
     max_total_bytes: int,
     run_scan: bool,
+    tls_rsa_key: Optional[TlsRsaKey] = None,
 ) -> WorkflowSummary:
-    analysis = analyze_http(capture, project, tshark, matching_uri=uri)
+    analysis = analyze_http(
+        capture,
+        project,
+        tshark,
+        matching_uri=uri,
+        tls_rsa_key=tls_rsa_key,
+    )
     bodies = extract_selected_http_bodies(
         project,
         tshark,
         uri=uri,
         max_body_bytes=max_body_bytes,
         max_total_bytes=max_total_bytes,
+        tls_rsa_key=tls_rsa_key,
     )
     scan = scan_project(project) if run_scan else None
     return WorkflowSummary(analysis=analysis, bodies=bodies, scan=scan)

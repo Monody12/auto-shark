@@ -85,6 +85,17 @@ def test_unknown_scanner_handles_chunks_and_excludes_obvious_values(tmp_path) ->
     assert matches[0].offset == path.read_bytes().index(unknown)
 
 
+def test_unknown_scanner_excludes_programming_language_blocks(tmp_path) -> None:
+    path = tmp_path / "evidence.bin"
+    path.write_bytes(b'else{$R.="/";} if{condition} acme{Mixed_123}')
+
+    matches, _, _, _ = scan_unknown_matches(path, chunk_size=5, max_matches=10)
+
+    assert [(item.kind, item.value) for item in matches] == [
+        ("unknown-brace", b"acme{Mixed_123}"),
+    ]
+
+
 def test_unknown_detection_is_bounded_idempotent_and_queues_brace_candidate(tmp_path) -> None:
     data = b"prefix acme{Mixed_123} and AbcDef1234567890_XyZ-987654 suffix"
     root, database = _project_with_body(tmp_path, data)

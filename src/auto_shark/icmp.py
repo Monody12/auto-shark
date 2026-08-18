@@ -366,7 +366,7 @@ def triage_icmp(
                 "tshark-icmp-triage",
                 capabilities.version_line,
                 json.dumps(argv, ensure_ascii=False),
-                capabilities.to_json(),
+                capabilities.to_provenance_json(),
                 _now(),
             ),
         )

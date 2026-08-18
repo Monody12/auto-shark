@@ -25,6 +25,20 @@ TOKEN_PATTERN = re.compile(
     rb"(?<![A-Za-z0-9_.+/=:-])([A-Za-z0-9][A-Za-z0-9_.+/=:-]{23,127})(?![A-Za-z0-9_.+/=:-])"
 )
 KNOWN_PREFIXES = {"flag", "ctf", "key", "answer"}
+CODE_BLOCK_PREFIXES = {
+    "catch",
+    "class",
+    "do",
+    "else",
+    "finally",
+    "for",
+    "foreach",
+    "function",
+    "if",
+    "switch",
+    "try",
+    "while",
+}
 TOKEN_MARKERS = set("_./+-=")
 MAX_OVERLAP = 256
 
@@ -141,7 +155,7 @@ def scan_unknown_matches(
                 if not at_end and match.end() == len(data):
                     continue
                 prefix = match.group(1).decode("ascii", errors="ignore").lower()
-                if prefix in KNOWN_PREFIXES:
+                if prefix in KNOWN_PREFIXES or prefix in CODE_BLOCK_PREFIXES:
                     continue
                 value = match.group(0)
                 matches.append(UnknownMatch("unknown-brace", value, base + match.start()))

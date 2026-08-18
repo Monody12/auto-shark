@@ -3,7 +3,7 @@ from auto_shark.search import find_flag_matches, scan_flag_matches
 
 def test_flag_search_finds_chunk_boundary_match_once(tmp_path) -> None:
     path = tmp_path / "evidence.bin"
-    path.write_bytes(b"x" * 14 + b"flag{cross-boundary}" + b"y" * 20)
+    path.write_bytes(b"x" * 13 + b"." + b"flag{cross-boundary}" + b"y" * 20)
     matches = find_flag_matches(path, chunk_size=16)
     assert [(match.offset, match.value) for match in matches] == [(14, b"flag{cross-boundary}")]
 
@@ -37,9 +37,16 @@ def test_flag_search_ignores_unbounded_or_malformed_text(tmp_path) -> None:
     assert find_flag_matches(path, chunk_size=8) == []
 
 
+def test_known_prefix_search_does_not_match_inside_longer_prefix(tmp_path) -> None:
+    path = tmp_path / "evidence.bin"
+    path.write_bytes(b"DDCTF{full_vendor_prefix_123}")
+
+    assert find_flag_matches(path, chunk_size=7) == []
+
+
 def test_bounded_flag_scan_reports_truncation_and_limit(tmp_path) -> None:
     path = tmp_path / "evidence.bin"
-    path.write_bytes(b"xxflag{one}yyflag{two}tail")
+    path.write_bytes(b"x.flag{one}y.flag{two}tail")
     truncated = scan_flag_matches(path, max_bytes=12, max_matches=10, chunk_size=5)
     assert [(item.offset, item.value) for item in truncated.matches] == [(2, b"flag{one}")]
     assert truncated.scanned_bytes == 12

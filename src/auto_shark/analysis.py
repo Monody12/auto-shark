@@ -12,7 +12,7 @@ from uuid import uuid4
 
 from .core.ids import stable_id
 from .engines.stream import run_streaming_lines
-from .engines.tshark import probe_tshark
+from .engines.tshark import TlsRsaKey, probe_tshark
 from .project import create_project
 from .protocols.http import HttpMessage, parse_http_line, tshark_http_arguments
 from .storage import Database
@@ -289,14 +289,21 @@ def _summary(
 
 
 def analyze_http(
-    capture: Path, project: Path, tshark: Path, *, matching_uri: Optional[str] = None
+    capture: Path,
+    project: Path,
+    tshark: Path,
+    *,
+    matching_uri: Optional[str] = None,
+    tls_rsa_key: Optional[TlsRsaKey] = None,
 ) -> AnalysisSummary:
     capabilities = probe_tshark(tshark)
     if not capabilities.usable or not capabilities.features.get("http", False):
         raise ValueError("TShark lacks required HTTP capabilities")
     project_info = create_project(capture, project)
     database = Database(project_info.root / "project.sqlite")
-    argv = tshark_http_arguments(tshark, project_info.capture_path)
+    preferences = tls_rsa_key.arguments if tls_rsa_key is not None else ()
+    argv = tshark_http_arguments(tshark, project_info.capture_path, preferences=preferences)
+    provenance_argv = tls_rsa_key.redact_argv(argv) if tls_rsa_key is not None else argv
     run_public_id = uuid4().hex
     with database.connect() as connection:
         capture_db_id = int(
@@ -311,8 +318,8 @@ def analyze_http(
             (
                 run_public_id,
                 capabilities.version_line,
-                json.dumps(argv, ensure_ascii=False),
-                capabilities.to_json(),
+                json.dumps(provenance_argv, ensure_ascii=False),
+                capabilities.to_provenance_json(tls_rsa_key=tls_rsa_key),
                 _utc_now(),
             ),
         )

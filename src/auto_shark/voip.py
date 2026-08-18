@@ -512,7 +512,7 @@ def extract_voip_audio(
                 "tshark-rtp-audio",
                 capabilities.version_line,
                 json.dumps(argv, ensure_ascii=False),
-                capabilities.to_json(),
+                capabilities.to_provenance_json(),
                 started_at,
             ),
         )

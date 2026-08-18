@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from io import StringIO
 from pathlib import Path
@@ -107,12 +108,15 @@ def parse_http_line(line: bytes) -> HttpMessage:
     )
 
 
-def tshark_http_arguments(executable: Path, capture: Path) -> list[str]:
+def tshark_http_arguments(
+    executable: Path, capture: Path, *, preferences: Sequence[str] = ()
+) -> list[str]:
     arguments = [
         str(executable),
         "-2",
         "-r",
         str(capture),
+        *preferences,
         "-Y",
         "tcp && (http.request || http.response)",
         "-T",

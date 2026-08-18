@@ -1,3 +1,4 @@
+import base64
 from datetime import datetime, timezone
 
 from auto_shark.core.ids import EvidenceLocator, evidence_id
@@ -152,3 +153,81 @@ def test_scan_project_enforces_first_transform_output_budget(tmp_path) -> None:
     assert summary.form_fields == 1
     assert summary.transforms == 0
     assert summary.candidates == 0
+
+
+def test_scan_project_recursively_decodes_complete_http_body(tmp_path) -> None:
+    expected = b"flag{nested-http-body}"
+    body = base64.b64encode(base64.b64encode(expected))
+    capture = tmp_path / "sample.pcap"
+    capture.write_bytes(b"capture")
+    project = tmp_path / "sample.auto-shark"
+    info = create_project(capture, project)
+    database = Database(project / "project.sqlite")
+    database.initialize()
+    blob = BlobStore(project / "blobs").put_bytes(body)
+    locator = EvidenceLocator(
+        capture_sha256=info.capture_sha256,
+        source_kind="http-body",
+        frame_start=7,
+        frame_end=7,
+        protocol_message="message",
+        byte_length=len(body),
+    )
+    with database.connect() as connection:
+        capture_id = int(connection.execute("SELECT id FROM capture").fetchone()[0])
+        connection.execute(
+            "INSERT INTO frame (capture_id,frame_number) VALUES (?,7)", (capture_id,)
+        )
+        connection.execute(
+            "INSERT INTO protocol_message "
+            "(message_id,capture_id,representative_frame,protocol,message_kind,fields_json) "
+            "VALUES ('message',?,7,'http','response','{}')",
+            (capture_id,),
+        )
+        message_id = int(connection.execute("SELECT last_insert_rowid()").fetchone()[0])
+        connection.execute(
+            "INSERT INTO http_message (protocol_message_id,content_length,content_type) "
+            "VALUES (?,?,'text/plain')",
+            (message_id, len(body)),
+        )
+        connection.execute(
+            "INSERT INTO tool_run (run_id,tool_name,argv_json,started_at,status) "
+            "VALUES ('run','test','[]',?,'completed')",
+            (_now(),),
+        )
+        tool_run_id = int(connection.execute("SELECT last_insert_rowid()").fetchone()[0])
+        connection.execute(
+            "INSERT INTO blob (sha256,byte_length,relative_path,complete,created_at) "
+            "VALUES (?,?,?,?,?)",
+            (blob.sha256, blob.byte_length, blob.path.relative_to(project).as_posix(), 1, _now()),
+        )
+        blob_id = int(connection.execute("SELECT last_insert_rowid()").fetchone()[0])
+        body_evidence_id = evidence_id(locator)
+        connection.execute(
+            "INSERT INTO evidence "
+            "(evidence_id,capture_id,source_kind,frame_start,frame_end,protocol_message_id,"
+            "byte_length,blob_id,locator_json) VALUES (?,?,'http-body',7,7,?,?,?,'{}')",
+            (body_evidence_id, capture_id, message_id, len(body), blob_id),
+        )
+        evidence_db_id = int(connection.execute("SELECT last_insert_rowid()").fetchone()[0])
+        connection.execute(
+            "INSERT INTO http_body "
+            "(protocol_message_id,evidence_id,tool_run_id,declared_length,extracted_length,"
+            "status,truncated,updated_at) VALUES (?,?,?,?,?,'complete',0,?)",
+            (message_id, evidence_db_id, tool_run_id, len(body), len(body), _now()),
+        )
+
+    first = scan_project(project)
+    second = scan_project(project)
+
+    assert first.transforms == second.transforms == 2
+    assert first.candidate_values == second.candidate_values == (expected.decode(),)
+    with database.connect() as connection:
+        rows = connection.execute(
+            "SELECT t.depth,t.name,e.text_value FROM transform t "
+            "JOIN evidence e ON e.id=t.output_evidence_id ORDER BY t.depth"
+        ).fetchall()
+    assert [(row[0], row[1], row[2]) for row in rows] == [
+        (1, "base64", base64.b64encode(expected).decode()),
+        (2, "base64", expected.decode()),
+    ]

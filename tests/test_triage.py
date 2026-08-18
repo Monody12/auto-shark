@@ -119,7 +119,7 @@ def test_triage_ranks_password_above_form_context_idempotently(tmp_path) -> None
 
 def test_triage_maps_tcp_match_to_primary_frame_and_ignores_history(tmp_path) -> None:
     root, _, database = _project(tmp_path)
-    current = b"xxflag{tcp-current}yy"
+    current = b"x.flag{tcp-current}yy"
     historical = b"flag{tcp-history}"
     current_blob_id = _blob(database, root, current)
     historical_blob_id = _blob(database, root, historical)

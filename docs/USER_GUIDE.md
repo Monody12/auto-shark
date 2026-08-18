@@ -108,10 +108,24 @@ and the manual queue points to community strings, OIDs, request/response pairs,
 and OctetString values. It does not claim automatic MIB interpretation or
 answer extraction.
 
-Encrypted TLS that has not been decrypted also receives a dedicated manual
-queue item. Look for a challenge-provided key log or RSA private key. A server
-RSA key only helps with compatible legacy RSA key exchanges; it does not
-decrypt ECDHE or TLS 1.3 traffic.
+Encrypted TLS that has not been decrypted receives a dedicated manual queue
+item. When a challenge supplies a server private key and the handshake uses a
+compatible legacy RSA key exchange, rerun the initial workflow with the key:
+
+```powershell
+uv run auto-shark analyze legacy-tls.pcap `
+  --project "$projects\legacy-tls.auto-shark" `
+  --tls-rsa-key challenge-server.pem --with-bodies --scan
+uv run auto-shark detect "$projects\legacy-tls.auto-shark"
+```
+
+The CLI accepts a regular file up to 1 MiB. It uses the key only as a TShark
+RSA Keys UAT input, records its SHA-256 and byte length, and redacts its local
+path from persisted tool arguments. The key bytes are never copied into the
+project. Supply the same option to `extract-body` when reopening the project
+for a one-frame extraction. A server RSA key does not decrypt ECDHE or TLS 1.3
+traffic; those sessions require appropriate key-log material, which Auto-Shark
+does not currently accept.
 
 For Telnet captures, index the directional dialogue before triage. Client
 input may arrive one character per packet, use bare CR line endings, and be
