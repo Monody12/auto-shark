@@ -647,6 +647,67 @@ def test_index_ftp_cli_forwards_limits(monkeypatch, capsys, tmp_path) -> None:
     assert json.loads(capsys.readouterr().out)["schema_version"] == "auto-shark.ftp-index/v1"
 
 
+def test_smtp_extract_cli_forwards_limits_and_refreshes_queue(
+    monkeypatch, capsys, tmp_path
+) -> None:
+    received = {}
+    events = []
+    executable = tmp_path / "tshark.exe"
+    executable.write_bytes(b"tool")
+    project = tmp_path / "mail.auto-shark"
+
+    def fake_extract(project_path, tshark_path, **limits):
+        received.update(project=project_path, tshark=tshark_path, **limits)
+        return SimpleNamespace(
+            to_json=lambda: json.dumps({"schema_version": "auto-shark.smtp-mime/v1"}) + "\n"
+        )
+
+    monkeypatch.setattr(cli, "find_tshark", lambda _path: executable)
+    monkeypatch.setattr(cli, "extract_smtp_messages", fake_extract)
+    monkeypatch.setattr(cli, "rebuild_manual_queue", lambda value: events.append(value))
+
+    result = cli.main(
+        [
+            "smtp-extract",
+            str(project),
+            "--tshark",
+            str(executable),
+            "--max-streams",
+            "3",
+            "--max-messages",
+            "5",
+            "--max-stream-bytes",
+            "7",
+            "--max-message-bytes",
+            "11",
+            "--max-message-total",
+            "13",
+            "--max-attachments",
+            "17",
+            "--max-attachment-bytes",
+            "19",
+            "--max-attachment-total",
+            "23",
+        ]
+    )
+
+    assert result == 0
+    assert received == {
+        "project": project,
+        "tshark": executable,
+        "max_streams": 3,
+        "max_messages": 5,
+        "max_stream_bytes": 7,
+        "max_message_bytes": 11,
+        "max_total_message_bytes": 13,
+        "max_attachments": 17,
+        "max_attachment_bytes": 19,
+        "max_total_attachment_bytes": 23,
+    }
+    assert events == [project]
+    assert json.loads(capsys.readouterr().out)["schema_version"] == ("auto-shark.smtp-mime/v1")
+
+
 def test_index_telnet_cli_forwards_limits(monkeypatch, capsys, tmp_path) -> None:
     received = {}
     executable = tmp_path / "tshark.exe"

@@ -103,7 +103,7 @@ def derive_coverage_status(
         return "unavailable"
     if analyzer_status == "failed":
         return "failed"
-    if budget_limited:
+    if analyzer_status == "budget-limited" or budget_limited:
         return "budget-limited"
     incomplete = {"partial", "truncated", "conflicting"}
     if analyzer_status in incomplete or reconstruction_status in incomplete:
@@ -379,6 +379,7 @@ def _persist_inventory(
 def _protocol_analyzer_status(
     connection: sqlite3.Connection, capture_id: int, label: str
 ) -> Optional[str]:
+    skip_reasons: set[str] = set()
     if label == "telnet":
         rows = connection.execute(
             "SELECT status FROM telnet_dialogue WHERE capture_id=?",
@@ -397,13 +398,48 @@ def _protocol_analyzer_status(
             ).fetchone()[0]
         )
         return "complete" if count else None
+    elif label == "smtp":
+        latest_row = connection.execute(
+            "SELECT max(tool_run_id) FROM ("
+            "SELECT tool_run_id FROM smtp_message WHERE capture_id=? "
+            "UNION ALL SELECT tool_run_id FROM smtp_skip)",
+            (capture_id,),
+        ).fetchone()
+        latest_run_id = latest_row[0] if latest_row is not None else None
+        if latest_run_id is None:
+            return None
+        rows = connection.execute(
+            "SELECT status FROM smtp_message WHERE capture_id=? AND tool_run_id=?",
+            (capture_id, latest_run_id),
+        ).fetchall()
+        skip_reasons = {
+            str(row["reason"])
+            for row in connection.execute(
+                "SELECT reason FROM smtp_skip WHERE tool_run_id=?",
+                (latest_run_id,),
+            )
+        }
     else:
         return None
     states = {str(row["status"]) for row in rows}
-    if not states:
+    if not states and not skip_reasons:
         return None
     if "failed" in states:
         return "failed"
+    if label == "smtp" and (
+        "skipped-budget" in states
+        or skip_reasons
+        & {
+            "stream-limit",
+            "message-limit",
+            "message-budget",
+            "attachment-limit",
+            "attachment-budget",
+        }
+    ):
+        return "budget-limited"
+    if label == "smtp" and skip_reasons:
+        return "partial"
     if states & {"partial", "truncated", "conflicting", "skipped-budget"}:
         return "partial"
     return "complete" if states <= {"complete"} else None

@@ -44,6 +44,7 @@ from .remote import (
     setup_remote_adapter,
 )
 from .reporting import ReportLimits, collect_report
+from .smtp import extract_smtp_messages
 from .tcp import reconstruct_tcp_stream
 from .tcp_text import triage_tcp_text
 from .tcp_urgent import triage_tcp_urgent
@@ -227,6 +228,20 @@ def _parser() -> argparse.ArgumentParser:
     tftp.add_argument("--max-transfers", type=int, default=256)
     tftp.add_argument("--max-transfer-bytes", type=int, default=64 * 1024 * 1024)
     tftp.add_argument("--max-total-bytes", type=int, default=256 * 1024 * 1024)
+
+    smtp = commands.add_parser(
+        "smtp-extract", help="recover bounded SMTP messages and MIME attachments"
+    )
+    smtp.add_argument("project", type=Path)
+    smtp.add_argument("--tshark", type=Path, help="explicit path to tshark executable")
+    smtp.add_argument("--max-streams", type=int, default=64)
+    smtp.add_argument("--max-messages", type=int, default=256)
+    smtp.add_argument("--max-stream-bytes", type=int, default=64 * 1024 * 1024)
+    smtp.add_argument("--max-message-bytes", type=int, default=16 * 1024 * 1024)
+    smtp.add_argument("--max-message-total", type=int, default=64 * 1024 * 1024)
+    smtp.add_argument("--max-attachments", type=int, default=256)
+    smtp.add_argument("--max-attachment-bytes", type=int, default=32 * 1024 * 1024)
+    smtp.add_argument("--max-attachment-total", type=int, default=128 * 1024 * 1024)
 
     telnet = commands.add_parser("index-telnet", help="index bounded directional Telnet dialogues")
     telnet.add_argument("project", type=Path)
@@ -945,6 +960,30 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             rebuild_manual_queue(args.project)
             print(summary.to_json(), end="")
             return 0
+        if args.command == "smtp-extract":
+            settings = Settings.from_environment()
+            executable = find_tshark(args.tshark or settings.tshark_path)
+            if executable is None:
+                print(
+                    "TShark was not found. Use --tshark or AUTO_SHARK_TSHARK.",
+                    file=sys.stderr,
+                )
+                return 2
+            summary = extract_smtp_messages(
+                args.project,
+                executable,
+                max_streams=args.max_streams,
+                max_messages=args.max_messages,
+                max_stream_bytes=args.max_stream_bytes,
+                max_message_bytes=args.max_message_bytes,
+                max_total_message_bytes=args.max_message_total,
+                max_attachments=args.max_attachments,
+                max_attachment_bytes=args.max_attachment_bytes,
+                max_total_attachment_bytes=args.max_attachment_total,
+            )
+            rebuild_manual_queue(args.project)
+            print(summary.to_json(), end="")
+            return 0
         if args.command == "triage":
             print(
                 triage_project(
@@ -1075,9 +1114,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     args.frame,
                     executable,
                     max_body_bytes=args.max_bytes,
-                    tls_rsa_key=(
-                        load_tls_rsa_key(args.tls_rsa_key) if args.tls_rsa_key else None
-                    ),
+                    tls_rsa_key=(load_tls_rsa_key(args.tls_rsa_key) if args.tls_rsa_key else None),
                 ).to_json()
             )
             return 0

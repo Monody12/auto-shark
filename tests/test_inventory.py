@@ -2,7 +2,7 @@ from pathlib import Path
 
 from auto_shark.engines.stream import StreamProcessResult
 from auto_shark.engines.tshark import TsharkCapabilities
-from auto_shark.inventory import derive_coverage_status, index_summary
+from auto_shark.inventory import _protocol_analyzer_status, derive_coverage_status, index_summary
 from auto_shark.project import create_project
 from auto_shark.protocols.inventory import INVENTORY_FIELDS
 from auto_shark.storage import Database
@@ -221,7 +221,57 @@ def test_coverage_precedence() -> None:
     )
     assert derive_coverage_status(capability_available=True, analyzer_status="partial") == "partial"
     assert (
+        derive_coverage_status(capability_available=True, analyzer_status="budget-limited")
+        == "budget-limited"
+    )
+    assert (
         derive_coverage_status(capability_available=True, analyzer_status="complete")
         == "complete"
     )
     assert derive_coverage_status(capability_available=True) == "not-run"
+
+
+def test_smtp_coverage_uses_latest_run_messages_and_skips(tmp_path) -> None:
+    root = _project(tmp_path)
+    database = Database(root / "project.sqlite")
+    with database.connect() as connection:
+        capture_id = int(connection.execute("SELECT id FROM capture").fetchone()[0])
+        for run_id in ("smtp-old", "smtp-current"):
+            connection.execute(
+                "INSERT INTO tool_run"
+                "(run_id,tool_name,argv_json,capability_json,started_at,status,exit_code) "
+                "VALUES(?,'tshark','[]','{}','2026-08-18T00:00:00+00:00','completed',0)",
+                (run_id,),
+            )
+        old_run_id, current_run_id = [
+            int(row[0]) for row in connection.execute("SELECT id FROM tool_run ORDER BY id")
+        ]
+        connection.execute(
+            "INSERT INTO smtp_skip"
+            "(tool_run_id,tcp_stream,frame_number,reason,count,detail_json) "
+            "VALUES(?,1,10,'data-not-reassembled',1,'{}')",
+            (old_run_id,),
+        )
+        connection.execute(
+            "INSERT INTO smtp_message"
+            "(message_id,capture_id,tool_run_id,tcp_stream,direction,data_frame,final_frame,"
+            "declared_length,status,updated_at) "
+            "VALUES('message',?,?,2,'a:1>b:25',20,21,100,'complete',"
+            "'2026-08-18T00:00:00+00:00')",
+            (capture_id, current_run_id),
+        )
+        assert _protocol_analyzer_status(connection, capture_id, "smtp") == "complete"
+        connection.execute(
+            "INSERT INTO smtp_skip"
+            "(tool_run_id,tcp_stream,frame_number,reason,count,detail_json) "
+            "VALUES(?,3,30,'data-not-reassembled',1,'{}')",
+            (current_run_id,),
+        )
+        assert _protocol_analyzer_status(connection, capture_id, "smtp") == "partial"
+        connection.execute("DELETE FROM smtp_skip WHERE tool_run_id=?", (current_run_id,))
+        connection.execute(
+            "INSERT INTO smtp_skip"
+            "(tool_run_id,reason,count,detail_json) VALUES(?,'attachment-budget',1,'{}')",
+            (current_run_id,),
+        )
+        assert _protocol_analyzer_status(connection, capture_id, "smtp") == "budget-limited"

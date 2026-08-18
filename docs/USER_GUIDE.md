@@ -16,8 +16,8 @@ uv run auto-shark probe
 ```
 
 `probe` prints the version and each capability (HTTP, TCP reassembly, FTP,
-FTP-DATA, Telnet, multipart). Analysis refuses to run with an unusable TShark
-rather than guessing.
+FTP-DATA, SMTP, Telnet, multipart). Analysis refuses to run with an unusable
+TShark rather than guessing.
 
 Projects live in a machine-local directory (never inside a synced folder):
 
@@ -36,6 +36,7 @@ uv run auto-shark triage   "$projects\case1.auto-shark"
 uv run auto-shark detect   "$projects\case1.auto-shark"
 uv run auto-shark index-summary "$projects\case1.auto-shark"
 uv run auto-shark tcp-text "$projects\case1.auto-shark"
+uv run auto-shark smtp-extract "$projects\case1.auto-shark"
 ```
 
 `tcp-text` handles captures where an unrecognized application sends printable
@@ -60,6 +61,22 @@ blocks, detects conflicting and missing data, handles the 16-bit block number
 wrap used by files larger than 32 MiB, and records server errors and exhausted
 budgets as evidence. Only a complete transfer becomes an artifact. Transferred
 packages and scripts are never executed.
+
+For SMTP captures, recover complete DATA messages and MIME attachments after
+the initial project is created:
+
+```powershell
+uv run auto-shark smtp-extract "$projects\case1.auto-shark"
+uv run auto-shark triage "$projects\case1.auto-shark"
+```
+
+The stage reconstructs each selected TCP direction under explicit stream,
+message, attachment, and aggregate byte limits. It preserves the raw EML,
+handles SMTP dot unescaping for MIME parsing, maps encoded attachment ranges
+back to the original TCP bytes, and records all contributing frames. Only a
+complete, source-mapped attachment becomes an artifact; incomplete DATA,
+decode failures, and budget skips remain explicit. Attachments are never
+executed or unpacked.
 
 For DNS-heavy captures, run the encoded-label pass. It groups suspicious
 hex/Base32/Base64URL labels by route and base domain, records a bounded decoded
@@ -126,6 +143,11 @@ project. Supply the same option to `extract-body` when reopening the project
 for a one-frame extraction. A server RSA key does not decrypt ECDHE or TLS 1.3
 traffic; those sessions require appropriate key-log material, which Auto-Shark
 does not currently accept.
+
+The GUI exposes the same option in `File > New project from capture...` as
+`Legacy TLS RSA private key (optional)`. The selected key is validated before
+the project is created and is held only for that staged run. Its path and bytes
+are not stored in GUI settings or the project.
 
 For Telnet captures, index the directional dialogue before triage. Client
 input may arrive one character per packet, use bare CR line endings, and be
@@ -206,6 +228,9 @@ location is chosen.
 - `manual-queue` — everything that needs a human, ranked by priority.
 - `tftp-extract` — bounded RRQ/WRQ reconstruction with direction, frame range,
   block gaps/conflicts, wrap handling, file hashes, and server-error records.
+- `smtp-extract` — bounded SMTP DATA reconstruction, raw EML hashes, MIME
+  attachment hashes, exact encoded source ranges, contributing frames, and
+  explicit incomplete/decode/budget states.
 - `voip-extract` — bounded G.711 RTP-to-WAV reconstruction with frame/SSRC
   provenance and explicit DTMF/FSK follow-up hints.
 - `dns-triage` — suspicious encoded DNS-label groups, bounded previews,

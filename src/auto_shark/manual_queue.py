@@ -300,6 +300,58 @@ def _tftp_signals(connection: sqlite3.Connection, capture_id: int) -> list[_Sign
     return result
 
 
+def _smtp_signals(connection: sqlite3.Connection, capture_id: int) -> list[_Signal]:
+    result = []
+    rows = connection.execute(
+        "SELECT sa.attachment_id,sa.status,sa.filename,sa.declared_media_type,"
+        "sa.evidence_id,sm.data_frame FROM smtp_attachment sa "
+        "JOIN smtp_message sm ON sm.id=sa.smtp_message_id WHERE sm.capture_id=? "
+        "ORDER BY sm.data_frame,sa.ordinal",
+        (capture_id,),
+    ).fetchall()
+    for row in rows:
+        complete = str(row["status"]) == "complete"
+        evidence = (
+            ((int(row["evidence_id"]), "smtp-attachment"),)
+            if row["evidence_id"] is not None
+            else ()
+        )
+        result.append(
+            _Signal(
+                "evidence" if evidence else "smtp-attachment",
+                (
+                    str(
+                        connection.execute(
+                            "SELECT evidence_id FROM evidence WHERE id=?",
+                            (row["evidence_id"],),
+                        ).fetchone()[0]
+                    )
+                    if evidence
+                    else str(row["attachment_id"])
+                ),
+                "artifact-review" if complete else "protocol-review",
+                "smtp-mime-attachment" if complete else "smtp-incomplete-attachment",
+                70 if complete else 85,
+                {
+                    "data_frame": int(row["data_frame"]),
+                    "filename": str(row["filename"] or ""),
+                    "media_type": str(row["declared_media_type"] or ""),
+                    "status": str(row["status"]),
+                    "next_step": (
+                        "Inspect the recovered MIME attachment without executing it."
+                        if complete
+                        else (
+                            "Review the MIME decode or budget failure before treating "
+                            "the attachment as complete."
+                        )
+                    ),
+                },
+                evidence,
+            )
+        )
+    return result
+
+
 def _unsupported_signals(
     connection: sqlite3.Connection,
     capture_id: int,
@@ -461,6 +513,7 @@ def rebuild_manual_queue(
             + _http_signals(connection, capture_id)
             + _dns_signals(connection, capture_id)
             + _tftp_signals(connection, capture_id)
+            + _smtp_signals(connection, capture_id)
             + _coverage_signals(connection, capture_id)
             + unsupported
         )

@@ -181,4 +181,6 @@ all exit criteria are verified and recorded in `PROJECT_STATE.md`.
   body, scan, and detector pipeline; persisted provenance records only the key
   SHA-256/size and a redacted argument, never the key bytes or local path.
 - A GUI key-selection surface and structured SMTP/MIME attachment recovery are
-  pending separate slices. ECDHE, TLS 1.3, and key-log input remain unsupported.
+  implemented for v0.3.0 with explicit budgets, evidence lineage, coverage,
+  queue/report integration, and real DDCTF acceptance. ECDHE, TLS 1.3, and
+  key-log input remain unsupported. Full release validation is active.

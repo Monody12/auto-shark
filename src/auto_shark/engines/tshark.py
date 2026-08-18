@@ -85,6 +85,12 @@ FEATURE_FIELDS = {
             "mime_multipart.header.content-type",
         }
     ),
+    "smtp": frozenset(
+        {
+            "smtp.req.command",
+            "smtp.data.reassembled.length",
+        }
+    ),
 }
 
 

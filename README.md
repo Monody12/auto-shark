@@ -33,6 +33,7 @@ uv run auto-shark detect   "$env:LOCALAPPDATA\AutoShark\projects\case1.auto-shar
 uv run auto-shark index-summary "$env:LOCALAPPDATA\AutoShark\projects\case1.auto-shark"
 uv run auto-shark tcp-text "$env:LOCALAPPDATA\AutoShark\projects\case1.auto-shark"
 uv run auto-shark tftp-extract "$env:LOCALAPPDATA\AutoShark\projects\case1.auto-shark"
+uv run auto-shark smtp-extract "$env:LOCALAPPDATA\AutoShark\projects\case1.auto-shark"
 uv run auto-shark dns-triage "$env:LOCALAPPDATA\AutoShark\projects\case1.auto-shark"
 uv run auto-shark icmp-triage "$env:LOCALAPPDATA\AutoShark\projects\case1.auto-shark"
 uv run auto-shark tcp-urgent "$env:LOCALAPPDATA\AutoShark\projects\case1.auto-shark"
@@ -81,7 +82,9 @@ installation requirements.
 The GUI opens or creates projects, runs the staged analysis pipeline with
 progress and between-stage cancellation, and provides bounded pages for
 overview, HTTP, streams, Telnet, candidates/findings, the WebShell timeline,
-the manual queue, notes/review marks, and bundle export.
+the manual queue, notes/review marks, and bundle export. The new-project dialog
+accepts an optional legacy TLS RSA private key for the initial analysis run;
+the path and key bytes are not saved in GUI settings or project metadata.
 
 The GUI selects Simplified Chinese automatically for `zh-*` Windows/Linux
 locales and uses English as the fallback for all other or unknown locales. Set
@@ -107,6 +110,11 @@ reproducing a support report.
 - `tftp-extract`: discovers RRQ and WRQ negotiations, follows negotiated UDP
   routes, reconstructs duplicate-aware 16-bit block sequences across wrap,
   and only promotes complete, gap-free, conflict-free transfers to artifacts.
+- `smtp-extract`: discovers SMTP DATA transactions, reconstructs bounded TCP
+  directions, preserves raw EML evidence, decodes MIME attachments, and records
+  exact source-stream ranges and contributing frames. Incomplete DATA and
+  exhausted message/attachment budgets remain explicit; recovered files are
+  never executed.
 - `dns-triage`: bounded hex/Base32/Base64URL label grouping and preview;
   only uniquely reconstructed PNG data with valid chunk CRCs is promoted to
   an artifact, while ambiguous streams remain manual-review evidence.

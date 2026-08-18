@@ -1,3 +1,4 @@
+import hashlib
 import json
 import subprocess
 import sys
@@ -6,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from auto_shark import cli
+from auto_shark.engines.tshark import TlsRsaKey
 from auto_shark.gui.services import (
     AnalysisStage,
     ProjectServices,
@@ -132,6 +134,7 @@ def test_services_export_and_stages(tmp_path) -> None:
     assert [stage.key for stage in stages] == [
         "ftp",
         "tftp",
+        "smtp",
         "scan",
         "triage",
         "detect",
@@ -148,6 +151,7 @@ def test_services_export_and_stages(tmp_path) -> None:
         "analyze",
         "ftp",
         "tftp",
+        "smtp",
         "scan",
         "triage",
         "detect",
@@ -159,8 +163,28 @@ def test_services_export_and_stages(tmp_path) -> None:
         "usb-hid",
         "voip",
     ]
-    scan_summary = with_capture[3].run()
+    scan_summary = with_capture[4].run()
     assert hasattr(scan_summary, "to_json")
+
+
+def test_gui_analysis_stage_forwards_tls_rsa_key(tmp_path, monkeypatch) -> None:
+    root = _services_project(tmp_path)
+    key_path = tmp_path / "challenge.pem"
+    key_path.write_bytes(b"key")
+    key = TlsRsaKey(key_path, 3, hashlib.sha256(b"key").hexdigest())
+    received = {}
+
+    def fake_analyze(capture, project, tshark, **options):
+        received.update(capture=capture, project=project, tshark=tshark, **options)
+        return "analyzed"
+
+    monkeypatch.setattr("auto_shark.gui.services.analyze_with_bodies", fake_analyze)
+    stage = ProjectServices(root).analysis_stages(
+        Path("tshark.exe"), capture=Path("capture.pcap"), tls_rsa_key=key
+    )[0]
+
+    assert stage.run() == "analyzed"
+    assert received["tls_rsa_key"] is key
 
 
 def test_stage_dataclass_and_tshark_resolution(tmp_path) -> None:
@@ -200,9 +224,13 @@ def test_gui_specialized_stages_refresh_manual_queue(tmp_path, monkeypatch) -> N
         "auto_shark.gui.services.rebuild_manual_queue",
         lambda value: events.append(("queue", value)),
     )
+    monkeypatch.setattr(
+        "auto_shark.gui.services.probe_tshark",
+        lambda _path: SimpleNamespace(features={"smtp": True}),
+    )
 
     def fake_stage(name):
-        def run(value, tshark):
+        def run(value, tshark, **_options):
             events.append((name, value, tshark))
             return name
 
@@ -211,6 +239,7 @@ def test_gui_specialized_stages_refresh_manual_queue(tmp_path, monkeypatch) -> N
     monkeypatch.setattr("auto_shark.gui.services.triage_tcp_urgent", fake_stage("tcp-urgent"))
     monkeypatch.setattr("auto_shark.gui.services.triage_usb_hid", fake_stage("usb-hid"))
     monkeypatch.setattr("auto_shark.gui.services.extract_voip_audio", fake_stage("voip"))
+    monkeypatch.setattr("auto_shark.gui.services.extract_smtp_messages", fake_stage("smtp"))
     stages = {
         stage.key: stage for stage in ProjectServices(root).analysis_stages(Path("tshark.exe"))
     }
@@ -218,12 +247,15 @@ def test_gui_specialized_stages_refresh_manual_queue(tmp_path, monkeypatch) -> N
     assert stages["tcp-urgent"].run() == "tcp-urgent"
     assert stages["usb-hid"].run() == "usb-hid"
     assert stages["voip"].run() == "voip"
+    assert stages["smtp"].run() == "smtp"
     assert events == [
         ("tcp-urgent", root, Path("tshark.exe")),
         ("queue", root),
         ("usb-hid", root, Path("tshark.exe")),
         ("queue", root),
         ("voip", root, Path("tshark.exe")),
+        ("queue", root),
+        ("smtp", root, Path("tshark.exe")),
         ("queue", root),
     ]
 

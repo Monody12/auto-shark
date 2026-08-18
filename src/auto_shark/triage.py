@@ -154,6 +154,12 @@ def _current_inputs(database: Database) -> tuple[_TriageInput, ...]:
                b.id,b.sha256,b.byte_length,b.relative_path
         FROM evidence e JOIN blob b ON b.id=e.blob_id
         WHERE e.source_kind='tftp-data' AND b.complete=1
+        UNION
+        SELECT e.id,e.evidence_id,e.capture_id,e.protocol_message_id,e.transaction_id,
+               e.source_kind,'artifact',e.frame_start,e.frame_end,e.direction,
+               b.id,b.sha256,b.byte_length,b.relative_path
+        FROM evidence e JOIN blob b ON b.id=e.blob_id
+        WHERE e.source_kind='smtp-attachment' AND b.complete=1
         ORDER BY evidence_public_id,input_kind,blob_sha256
     """
     with database.connect() as connection:

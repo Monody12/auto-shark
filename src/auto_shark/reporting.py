@@ -390,6 +390,18 @@ def _assessment(collections: dict) -> dict:
                 ),
             }
         )
+    smtp_evidence = [
+        item for item in items("evidence") if item.get("source_kind") == "smtp-attachment"
+    ]
+    if smtp_evidence:
+        behaviors.append(
+            {
+                "kind": "smtp-mime-attachment",
+                "source": "smtp-mime-recovery",
+                "count": len(smtp_evidence),
+                "hint": "Review recovered mail attachments and their exact TCP/MIME provenance.",
+            }
+        )
     detector_counts: dict[str, int] = {}
     for finding in items("findings"):
         detector = str(finding.get("detector", "unknown"))

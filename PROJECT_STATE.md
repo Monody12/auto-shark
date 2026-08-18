@@ -1,6 +1,6 @@
 # Auto-Shark Project State
 
-Updated: 2026-08-17, Asia/Shanghai
+Updated: 2026-08-18, Asia/Shanghai
 
 This is the canonical resume checkpoint. Update it after every tested slice.
 
@@ -1112,3 +1112,64 @@ manifest (`file`, `strings`, or `zsteg`) remain useful follow-up validation.
   Structured SMTP/MIME attachment recovery and a GUI TLS-key picker remain the
   next independent feature slices. Do not publish this functional work as a
   replacement 0.2.0 release.
+
+## 2026-08-18 v0.3.0 SMTP and GUI TLS checkpoint
+
+- Schema 16 adds explicit `smtp_message`, `smtp_attachment`, and `smtp_skip`
+  records. The `smtp-extract` CLI and GUI stage use structured TShark DATA
+  metadata, bounded TCP reconstruction, exact SMTP terminator handling,
+  RFC dot unescaping, and Python's standard MIME parser. Raw EML and decoded
+  attachments are content-addressed evidence; only complete, source-mapped,
+  budget-compliant attachments become artifacts.
+- Attachment locators retain the parent message, TCP stream/direction, DATA
+  and final frames, exact encoded source-stream range, MIME ordinal, filename,
+  media type, transfer encoding, and all contributing frames. Current complete
+  SMTP attachments are included in triage, reporting assessment, and the
+  persistent manual queue. SMTP capability and coverage are explicit.
+- A clean DDCTF-only SMTP run under
+  `%LOCALAPPDATA%\AutoShark\projects\ddctf2018-smtp-v030-20260818.auto-shark`
+  recovered eight complete messages. One additional outbound DATA sequence is
+  genuinely incomplete in the capture, so aggregate coverage is correctly
+  `partial`. Stream 2016 produced the exact 756,964-byte EML SHA-256
+  `ad80128770d9c053dbacd1a88d85a693fe09b00d05e89e2edf216ac43c9c6edc`
+  and the 556,106-byte `image001.png` SHA-256
+  `9570684588092b0959e6a14d01123b57a76c286e4603129f48db8d79e4e70fd5`.
+  FTP was not run and the unrelated `sqlmap.zip` stream was not touched.
+- The new-project GUI dialog now accepts an optional challenge-provided legacy
+  TLS RSA private key, validates it with the existing 1 MiB bounded loader,
+  and passes the in-memory `TlsRsaKey` through `MainWindow` and GUI services to
+  HTTP analysis. The key path is not added to `GuiSettings` or project files;
+  Simplified Chinese labels and errors are included.
+- Focused Ruff passes and 80 SMTP, database, CLI, inventory, queue, reporting,
+  TShark, GUI service, and offscreen widget tests pass. The next exact step is
+  full Python 3.11/3.9 regression before the 0.3.0 release build.
+- The follow-up incomplete-DATA provenance patch passes 74 focused tests. A
+  fresh real `smtp-extract` rerun remains eight complete messages plus one
+  unmatched DATA command, now explicitly located at TCP stream 2007, frame
+  8280 with reason `data-not-reassembled`. SQLite reports integrity `ok`, zero
+  foreign-key violations, all 135 Blob lengths/hashes match, `jobs` is empty,
+  and `image001.png` retains its verified 556,106-byte SHA-256. No FTP stage
+  ran and stream 2005/`sqlmap.zip` was not touched.
+- The final v0.3.0 source gate, including latest-run SMTP coverage precedence,
+  passes with real TShark 4.6.7: Windows Python 3.11.15 reports 300 passed in
+  55.40 seconds; Python 3.9.25 reports 289 passed and one expected optional-GUI
+  skip in 53.37 seconds. Ruff, compileall, and `git diff --check` pass. The next
+  exact step is the final wheel/sdist and Windows installer/portable rebuild,
+  followed by frozen and upgrade validation.
+- The final local v0.3.0 release build passes with PyInstaller 6.22.1 and Inno
+  Setup 6.7.3. `SHA256SUMS` independently verifies: installer
+  `b3433fbec2fd82a42a3d4f3b3cdc753a0bf09902d1b792c7d406829331508717`,
+  portable ZIP
+  `2444c68eef853864fb16f367de7377b524395db74ef6dcaf1f85e9c05c12fd69`,
+  wheel `d6293a46d3cea32a8d045df5557409618fc4bcf54690c4c758fb40d4729aa9ea`,
+  and sdist `9376538310633a0f6ea0921e9e3cde66c53973543e2c462374b75d02d5b3bdc1`.
+  The wheel contains SMTP, inventory, GUI, plugin, remote, reporting, and
+  adapter modules; the portable archive has only the stable `AutoShark` root.
+- Final frozen validation passes: CLI version 0.3.0, real TShark probe with
+  SMTP capability, `smtp-extract --help`, fixture analyze/report at schema 16,
+  empty jobs, adapter presence, and five-second Simplified-Chinese offscreen
+  GUI startup. A real published-v0.2.0-to-local-v0.3.0 installer upgrade
+  removed a stale `_internal` marker, preserved and migrated the test project
+  from schema 15 to 16, and produced a report. Silent uninstall removed the
+  program directory while preserving the project and report. The next exact
+  step is commit/push/tag and published-asset verification.

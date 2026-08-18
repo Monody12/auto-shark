@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..config import Settings
+from ..engines.tshark import TlsRsaKey, load_tls_rsa_key
 from ..project import ProjectInfo, create_project
 from .i18n import apply_widget_translations, detect_language, translate
 from .services import PAGE_LIMIT, ProjectServices, resolve_tshark
@@ -680,10 +681,16 @@ class MainWindow(QMainWindow):
         dialog.setWindowTitle(self._t("New project from capture"))
         form = QFormLayout(dialog)
         capture_edit = QLineEdit()
-        capture_button = QPushButton("Browse…")
+        capture_edit.setObjectName("capturePath")
+        capture_button = QPushButton(self._t("Browse…"))
         project_edit = QLineEdit()
-        project_button = QPushButton("Browse…")
+        project_edit.setObjectName("projectPath")
+        project_button = QPushButton(self._t("Browse…"))
         tshark_edit = QLineEdit()
+        tshark_edit.setObjectName("tsharkPath")
+        tls_key_edit = QLineEdit()
+        tls_key_edit.setObjectName("tlsRsaKeyPath")
+        tls_key_button = QPushButton(self._t("Browse…"))
         resolved = resolve_tshark(None)
         if resolved is not None:
             tshark_edit.setText(str(resolved))
@@ -697,9 +704,15 @@ class MainWindow(QMainWindow):
         capture_widget.setLayout(capture_row)
         project_widget = QWidget()
         project_widget.setLayout(project_row)
-        form.addRow("Capture file", capture_widget)
-        form.addRow("Project directory", project_widget)
-        form.addRow("TShark executable", tshark_edit)
+        tls_key_row = QHBoxLayout()
+        tls_key_row.addWidget(tls_key_edit, 1)
+        tls_key_row.addWidget(tls_key_button)
+        tls_key_widget = QWidget()
+        tls_key_widget.setLayout(tls_key_row)
+        form.addRow(self._t("Capture file"), capture_widget)
+        form.addRow(self._t("Project directory"), project_widget)
+        form.addRow(self._t("TShark executable"), tshark_edit)
+        form.addRow(self._t("Legacy TLS RSA private key (optional)"), tls_key_widget)
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
@@ -721,18 +734,41 @@ class MainWindow(QMainWindow):
             if path:
                 project_edit.setText(path)
 
+        def pick_tls_key() -> None:
+            path, _ = QFileDialog.getOpenFileName(
+                dialog,
+                self._t("Choose TLS RSA private key"),
+                "",
+                "Key files (*.pem *.key);;All files (*)",
+            )
+            if path:
+                tls_key_edit.setText(path)
+
         capture_button.clicked.connect(pick_capture)
         project_button.clicked.connect(pick_project)
+        tls_key_button.clicked.connect(pick_tls_key)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         capture_text = capture_edit.text().strip()
         project_text = project_edit.text().strip()
         tshark_text = tshark_edit.text().strip()
+        tls_key_text = tls_key_edit.text().strip()
         if not capture_text or not project_text:
             QMessageBox.warning(
                 self, self._t("Auto-Shark"), self._t("Capture and project paths are required.")
             )
             return
+        tls_rsa_key = None
+        if tls_key_text:
+            try:
+                tls_rsa_key = load_tls_rsa_key(Path(tls_key_text))
+            except (OSError, ValueError) as error:
+                QMessageBox.critical(
+                    self,
+                    self._t("Auto-Shark"),
+                    self._t("Cannot load TLS RSA private key: ") + str(error),
+                )
+                return
         try:
             info = create_project(Path(capture_text), Path(project_text))
         except (OSError, ValueError, FileExistsError) as error:
@@ -759,12 +795,16 @@ class MainWindow(QMainWindow):
                 ),
             )
             return
-        self.run_analysis(capture=Path(capture_text), tshark=tshark)
+        self.run_analysis(capture=Path(capture_text), tshark=tshark, tls_rsa_key=tls_rsa_key)
 
     # ------------------------------------------------------------- analysis
 
     def run_analysis(
-        self, *, capture: Optional[Path] = None, tshark: Optional[Path] = None
+        self,
+        *,
+        capture: Optional[Path] = None,
+        tshark: Optional[Path] = None,
+        tls_rsa_key: Optional[TlsRsaKey] = None,
     ) -> None:
         if self.services is None:
             QMessageBox.information(self, self._t("Auto-Shark"), self._t("Open a project first."))
@@ -780,7 +820,7 @@ class MainWindow(QMainWindow):
                 ),
             )
             return
-        stages = self.services.analysis_stages(executable, capture=capture)
+        stages = self.services.analysis_stages(executable, capture=capture, tls_rsa_key=tls_rsa_key)
         self._start_stage_worker(stages)
 
     def _start_stage_worker(self, stages: list) -> None:

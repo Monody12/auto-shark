@@ -16,7 +16,15 @@ def test_database_initialization_is_idempotent(tmp_path) -> None:
         assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         journal_mode = connection.execute("PRAGMA journal_mode").fetchone()[0]
         assert str(journal_mode).lower() == "wal"
-    assert {"capture", "evidence", "candidate", "transform"}.issubset(set(database.table_names()))
+    assert {
+        "capture",
+        "evidence",
+        "candidate",
+        "transform",
+        "smtp_message",
+        "smtp_attachment",
+        "smtp_skip",
+    }.issubset(set(database.table_names()))
 
 
 def test_database_rejects_future_schema(tmp_path) -> None:

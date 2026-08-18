@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 from datetime import datetime, timezone
@@ -10,7 +11,7 @@ import pytest  # noqa: E402
 pytest.importorskip("PySide6", reason="GUI widget tests need the optional gui extra")
 
 from PySide6.QtCore import QEventLoop, QTimer  # noqa: E402
-from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
+from PySide6.QtWidgets import QApplication, QDialog, QLineEdit, QMessageBox  # noqa: E402
 
 from auto_shark.gui.main_window import PAGE_NAMES, MainWindow  # noqa: E402
 from auto_shark.gui.services import AnalysisStage  # noqa: E402
@@ -51,8 +52,9 @@ def _widget_project(tmp_path: Path) -> Path:
             (capture_id, json.dumps({"local": str(root)})),
         )
         evidence_id = int(
-            connection.execute("SELECT id FROM evidence WHERE evidence_id='evidence-1'")
-            .fetchone()[0]
+            connection.execute("SELECT id FROM evidence WHERE evidence_id='evidence-1'").fetchone()[
+                0
+            ]
         )
         connection.execute(
             "INSERT INTO candidate"
@@ -62,8 +64,7 @@ def _widget_project(tmp_path: Path) -> Path:
         )
         candidate_id = int(connection.execute("SELECT id FROM candidate").fetchone()[0])
         connection.execute(
-            "INSERT INTO candidate_evidence(candidate_id,evidence_id,role) "
-            "VALUES(?,?,'match')",
+            "INSERT INTO candidate_evidence(candidate_id,evidence_id,role) VALUES(?,?,'match')",
             (candidate_id, evidence_id),
         )
     return root
@@ -272,3 +273,39 @@ def test_open_capture_creates_machine_local_project(qapp, tmp_path, monkeypatch)
     window._open_capture_dialog()
     assert triggered["capture"] is None  # existing project: refresh stages only
     assert (expected_root / "project.json").is_file()
+
+
+def test_new_project_dialog_forwards_ephemeral_tls_rsa_key(qapp, tmp_path, monkeypatch) -> None:
+    capture = tmp_path / "mail.pcap"
+    capture.write_bytes(b"pcap")
+    project = tmp_path / "mail.auto-shark"
+    tshark = tmp_path / "tshark.exe"
+    tshark.write_bytes(b"tool")
+    key_path = tmp_path / "challenge.pem"
+    key_path.write_bytes(b"challenge key")
+    received = {}
+
+    def fake_exec(dialog):
+        values = {
+            "capturePath": capture,
+            "projectPath": project,
+            "tsharkPath": tshark,
+            "tlsRsaKeyPath": key_path,
+        }
+        for object_name, value in values.items():
+            dialog.findChild(QLineEdit, object_name).setText(str(value))
+        return QDialog.DialogCode.Accepted
+
+    def fake_run_analysis(self, **options):
+        received.update(options)
+
+    monkeypatch.setattr(QDialog, "exec", fake_exec)
+    monkeypatch.setattr(MainWindow, "run_analysis", fake_run_analysis)
+    window = MainWindow()
+    window._new_project_dialog()
+
+    assert received["capture"] == capture
+    assert received["tshark"] == tshark
+    assert received["tls_rsa_key"].path == key_path.resolve()
+    assert received["tls_rsa_key"].sha256 == hashlib.sha256(b"challenge key").hexdigest()
+    assert not hasattr(window._settings, "tls_rsa_key")

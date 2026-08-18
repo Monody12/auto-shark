@@ -17,7 +17,7 @@ from typing import Optional
 from ..config import Settings
 from ..detectors import detect_project
 from ..dns import triage_dns_tunnels
-from ..engines.tshark import find_tshark, probe_tshark
+from ..engines.tshark import TlsRsaKey, find_tshark, probe_tshark
 from ..exporting import ExportLimits, export_bundle
 from ..ftp import index_ftp
 from ..icmp import triage_icmp
@@ -36,6 +36,7 @@ from ..queries import (
     query_transactions,
 )
 from ..reporting import collect_report
+from ..smtp import extract_smtp_messages
 from ..tcp_text import triage_tcp_text
 from ..tcp_urgent import triage_tcp_urgent
 from ..tftp import extract_tftp_transfers
@@ -207,7 +208,11 @@ class ProjectServices:
     # ---------------------------------------------------------------- analysis
 
     def analysis_stages(
-        self, tshark: Path, *, capture: Optional[Path] = None
+        self,
+        tshark: Path,
+        *,
+        capture: Optional[Path] = None,
+        tls_rsa_key: Optional[TlsRsaKey] = None,
     ) -> list[AnalysisStage]:
         """Return the ordered bounded analysis pipeline for this project.
 
@@ -228,6 +233,7 @@ class ProjectServices:
                         max_body_bytes=16 * 1024 * 1024,
                         max_total_bytes=64 * 1024 * 1024,
                         run_scan=True,
+                        tls_rsa_key=tls_rsa_key,
                     ),
                 )
             )
@@ -260,6 +266,17 @@ class ProjectServices:
 
         def tftp_stage() -> object:
             summary = extract_tftp_transfers(self.root, tshark)
+            rebuild_manual_queue(self.root)
+            return summary
+
+        def smtp_stage() -> object:
+            capabilities = probe_tshark(tshark)
+            if not capabilities.features.get("smtp", False):
+                return {
+                    "status": "unavailable",
+                    "reason": "TShark lacks the required SMTP fields",
+                }
+            summary = extract_smtp_messages(self.root, tshark, capabilities=capabilities)
             rebuild_manual_queue(self.root)
             return summary
 
@@ -306,6 +323,11 @@ class ProjectServices:
                     "tftp",
                     "Reconstruct TFTP uploads and downloads",
                     tftp_stage,
+                ),
+                AnalysisStage(
+                    "smtp",
+                    "Recover SMTP messages and MIME attachments",
+                    smtp_stage,
                 ),
                 AnalysisStage(
                     "scan",

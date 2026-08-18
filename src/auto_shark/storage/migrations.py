@@ -1121,4 +1121,66 @@ MIGRATIONS = (
     CREATE INDEX IF NOT EXISTS idx_plugin_output_run
         ON plugin_output(plugin_run_id, relative_path);
     """,
+    """
+    CREATE TABLE IF NOT EXISTS smtp_message (
+        id INTEGER PRIMARY KEY,
+        message_id TEXT NOT NULL UNIQUE,
+        capture_id INTEGER NOT NULL REFERENCES capture(id) ON DELETE CASCADE,
+        tool_run_id INTEGER NOT NULL REFERENCES tool_run(id) ON DELETE RESTRICT,
+        tcp_stream INTEGER NOT NULL CHECK (tcp_stream >= 0),
+        direction TEXT NOT NULL,
+        data_frame INTEGER NOT NULL CHECK (data_frame > 0),
+        final_frame INTEGER NOT NULL CHECK (final_frame >= data_frame),
+        declared_length INTEGER NOT NULL CHECK (declared_length >= 0),
+        source_offset INTEGER,
+        source_length INTEGER,
+        tcp_evidence_id INTEGER REFERENCES evidence(id) ON DELETE SET NULL,
+        message_evidence_id INTEGER REFERENCES evidence(id) ON DELETE SET NULL,
+        subject TEXT,
+        status TEXT NOT NULL CHECK (
+            status IN ('complete','partial','failed','skipped-budget')
+        ),
+        attachment_count INTEGER NOT NULL DEFAULT 0 CHECK (attachment_count >= 0),
+        complete_attachments INTEGER NOT NULL DEFAULT 0 CHECK (complete_attachments >= 0),
+        error TEXT,
+        updated_at TEXT NOT NULL,
+        UNIQUE (capture_id, tcp_stream, data_frame)
+    );
+
+    CREATE TABLE IF NOT EXISTS smtp_attachment (
+        id INTEGER PRIMARY KEY,
+        attachment_id TEXT NOT NULL UNIQUE,
+        smtp_message_id INTEGER NOT NULL REFERENCES smtp_message(id) ON DELETE CASCADE,
+        ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+        filename TEXT,
+        declared_media_type TEXT,
+        transfer_encoding TEXT,
+        source_offset INTEGER,
+        source_length INTEGER,
+        decoded_length INTEGER NOT NULL DEFAULT 0 CHECK (decoded_length >= 0),
+        status TEXT NOT NULL CHECK (status IN ('complete','failed','skipped-budget')),
+        evidence_id INTEGER REFERENCES evidence(id) ON DELETE SET NULL,
+        artifact_id INTEGER REFERENCES artifact(id) ON DELETE SET NULL,
+        detail_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE (smtp_message_id, ordinal)
+    );
+
+    CREATE TABLE IF NOT EXISTS smtp_skip (
+        id INTEGER PRIMARY KEY,
+        tool_run_id INTEGER NOT NULL REFERENCES tool_run(id) ON DELETE CASCADE,
+        tcp_stream INTEGER,
+        frame_number INTEGER,
+        reason TEXT NOT NULL,
+        count INTEGER NOT NULL CHECK (count > 0),
+        detail_json TEXT NOT NULL,
+        UNIQUE (tool_run_id, tcp_stream, frame_number, reason)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_smtp_message_capture
+        ON smtp_message(capture_id, tcp_stream, data_frame);
+    CREATE INDEX IF NOT EXISTS idx_smtp_message_status ON smtp_message(capture_id, status);
+    CREATE INDEX IF NOT EXISTS idx_smtp_attachment_message
+        ON smtp_attachment(smtp_message_id, ordinal);
+    """,
 )
