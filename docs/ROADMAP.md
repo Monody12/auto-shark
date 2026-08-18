@@ -171,7 +171,7 @@ all exit criteria are verified and recorded in `PROJECT_STATE.md`.
   provenance, RTP conflict handling, incomplete TCP reconstruction coverage,
   stale manual-task filtering, SFTP batch cleanup, and frozen adapter inclusion.
 
-## Post-v0.2.0 corpus hardening (active)
+## v0.3.0 - HTTP, legacy TLS, and SMTP hardening (complete)
 
 - Bounded HTTP body batching, compact repeated TShark provenance, recursive
   complete-body transforms, and stricter known/unknown candidate boundaries are
@@ -183,4 +183,7 @@ all exit criteria are verified and recorded in `PROJECT_STATE.md`.
 - A GUI key-selection surface and structured SMTP/MIME attachment recovery are
   implemented for v0.3.0 with explicit budgets, evidence lineage, coverage,
   queue/report integration, and real DDCTF acceptance. ECDHE, TLS 1.3, and
-  key-log input remain unsupported. Full release validation is active.
+  key-log input remain unsupported.
+- Published v0.3.0 after dual-Python real-TShark regression, schema/Blob audit,
+  frozen CLI/GUI validation, v0.2.0 installer upgrade, independent CI, and
+  downloaded-asset checksum/runtime verification.

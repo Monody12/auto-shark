@@ -29,7 +29,7 @@ Status legend: [x] verified with recorded evidence, [ ] pending execution.
 - [x] README and user guide cover SMTP recovery, budgets, evidence, TLS limits,
       and the GUI key picker.
 - [x] Version metadata is 0.3.0 with the existing Beta classifier.
-- [ ] `PROJECT_STATE.md` and `docs/ROADMAP.md` contain final release evidence.
+- [x] `PROJECT_STATE.md` and `docs/ROADMAP.md` contain final release evidence.
 
 ## Windows packages
 
@@ -44,13 +44,13 @@ Status legend: [x] verified with recorded evidence, [ ] pending execution.
 
 ## Published release
 
-- [ ] Main commit and annotated `v0.3.0` tag are pushed.
-- [ ] Tag-triggered GitHub Actions release workflow completes successfully.
-- [ ] GitHub Release v0.3.0 exposes installer, portable ZIP, wheel, sdist, and
+- [x] Main commit and annotated `v0.3.0` tag are pushed.
+- [x] Tag-triggered GitHub Actions release workflow completes successfully.
+- [x] GitHub Release v0.3.0 exposes installer, portable ZIP, wheel, sdist, and
       `SHA256SUMS`.
-- [ ] Every published asset is downloaded and independently verified against
+- [x] Every published asset is downloaded and independently verified against
       the published checksum manifest.
-- [ ] Downloaded wheel and portable package pass version/content/probe and
+- [x] Downloaded wheel and portable package pass version/content/probe and
       offscreen GUI checks.
 
 ## Clean-machine install test (run once before announcing)

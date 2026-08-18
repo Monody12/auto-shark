@@ -1171,5 +1171,25 @@ manifest (`file`, `strings`, or `zsteg`) remain useful follow-up validation.
   GUI startup. A real published-v0.2.0-to-local-v0.3.0 installer upgrade
   removed a stale `_internal` marker, preserved and migrated the test project
   from schema 15 to 16, and produced a report. Silent uninstall removed the
-  program directory while preserving the project and report. The next exact
-  step is commit/push/tag and published-asset verification.
+  program directory while preserving the project and report. These local gates
+  authorized the release tag and published-asset verification below.
+- v0.3.0 is published at
+  https://github.com/Monody12/auto-shark/releases/tag/v0.3.0 (release ID
+  372325655). Tag commit `dcf5f63` completed Release run `32136292430`; the
+  independent Windows 3.11/Linux 3.9 real-TShark CI matrix also completed in
+  run `32136292381`.
+- All five published assets were downloaded. Their GitHub digests match local
+  rehashes, and all four delivery files match the published `SHA256SUMS`:
+  installer `f5f88ec543d2063279227e6094cfbcb449a573f01531d2208bc272ad278f4ffa`,
+  portable ZIP
+  `c07be07674e76a68d8c7e6932344217475c1a28c9f942da9fd7c82cb49bb3071`,
+  wheel `846696a87720e679f7989ccdb7827beaf66d0a6e23831c448ac832fd99a88b4d`,
+  and sdist `a583c72ad3f8c830cc81c2f0921b1b674fc414d287e8f3a758eca0e08cc3f43a`.
+  The checksum file hashes to
+  `0713bd63b6380322f8d6a6525f6e3c967b39f022311b6edc7ce51935ae5ea98b`.
+- The downloaded wheel/sdist contain the required SMTP and runtime modules.
+  The downloaded portable package passes version, SMTP probe/help, fixture
+  analyze/report, schema 16, empty jobs, adapter, and offscreen GUI checks.
+  The downloaded installer independently passes the v0.2.0-to-v0.3.0 upgrade,
+  schema 15-to-16 migration, stale-runtime cleanup, project/report preservation,
+  and silent uninstall checks. v0.3.0 release validation is complete.
