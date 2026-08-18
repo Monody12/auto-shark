@@ -1014,3 +1014,15 @@ manifest (`file`, `strings`, or `zsteg`) remain useful follow-up validation.
   preserved the project, and read it successfully; uninstall removed the app
   while preserving the project and report. The independent Windows 11 clean-
   machine exercise remains explicitly pending in `docs/RELEASE_CHECKLIST.md`.
+- Commit `a3b1adc` is tagged `v0.2.0` and published at
+  https://github.com/Monody12/auto-shark/releases/tag/v0.2.0. GitHub Actions
+  run `32087142678` completed successfully and uploaded five assets.
+- All four published artifacts were downloaded and rehashed against the
+  published `SHA256SUMS`: installer
+  `2965bdcc584d2146479d69f01cb2598f0363ce2710ddf5cccf5a5adb49ab1783`,
+  portable ZIP
+  `181b4a22eeca8b9276dd43ca85e165ad4ac8a306cf775a2c8e6d7bbf99c320ac`,
+  wheel `fe261a20b601bc2c9400f6422bb702fbc3a074a011c4e615f17a0ff9568a5d2f`,
+  and sdist `5c0a8d3fa104d0c782edd43a8826d9d3f35f5440ac1d9e06c9b13b23e7c45e2d`.
+  The downloaded wheel/runtime contents, portable CLI probe, adapter, and
+  offscreen GUI startup all pass.

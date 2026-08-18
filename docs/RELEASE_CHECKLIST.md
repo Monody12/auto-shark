@@ -53,9 +53,10 @@ Status legend: [x] verified with recorded evidence, [ ] pending execution.
       upgrades the existing copy in place and preserves projects.
 - [x] Reproducible build script `scripts/build_windows_release.ps1` emits the
       installer, portable ZIP, wheel, sdist, and `SHA256SUMS`.
-- [ ] Tag-triggered GitHub Release workflow publishes both Windows packages.
+- [x] Tag-triggered GitHub Release workflow published both Windows packages,
+      Python distributions, checksums, and generated release notes.
 
-## v0.2.0 local release evidence
+## v0.2.0 release evidence
 
 - [x] Frozen CLI reports `auto-shark 0.2.0`; real-TShark probe, body extraction,
       scan, and JSON report smoke passed on the committed HTTP fixture.
@@ -66,11 +67,15 @@ Status legend: [x] verified with recorded evidence, [ ] pending execution.
       upgraded in place to v0.2.0, and verified the marker was removed while
       the project remained readable. Silent uninstall removed the application
       directory and preserved the project and its upgrade report.
-- [x] `SHA256SUMS` independently verified for all four release assets:
-      wheel `5fedd525844129cc62f2d05741de044d04cc1425f07b6e2e06c40bd856be9780`,
-      sdist `d08fde30a4d05b788e6cf70b27f55070cf249595753afb24709f85caa198ccc6`,
-      portable ZIP `1368266fa68103446bcd97ee28aac61f9fe5e4faa7f9ff21a9835b64cf3401cb`,
-      installer `602f2922275c90c70031987b2b262ebc18312a918207a911a0c8b4ba0e405eae`.
+- [x] GitHub Release v0.2.0 is public with five assets. The published files
+      were downloaded and independently verified against its `SHA256SUMS`:
+      wheel `fe261a20b601bc2c9400f6422bb702fbc3a074a011c4e615f17a0ff9568a5d2f`,
+      sdist `5c0a8d3fa104d0c782edd43a8826d9d3f35f5440ac1d9e06c9b13b23e7c45e2d`,
+      portable ZIP `181b4a22eeca8b9276dd43ca85e165ad4ac8a306cf775a2c8e6d7bbf99c320ac`,
+      installer `2965bdcc584d2146479d69f01cb2598f0363ce2710ddf5cccf5a5adb49ab1783`.
+- [x] The downloaded CI wheel has version 0.2.0 and all new runtime modules;
+      the downloaded portable package passes version/probe, adapter-presence,
+      and offscreen GUI startup checks.
 
 ## Clean-machine install test (run once before announcing)
 
