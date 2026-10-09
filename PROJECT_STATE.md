@@ -1,8 +1,128 @@
 # Auto-Shark Project State
 
-Updated: 2026-08-18, Asia/Shanghai
+Updated: 2026-10-09, Asia/Shanghai
 
 This is the canonical resume checkpoint. Update it after every tested slice.
+
+## Latest checkpoint (2026-10-09) — v0.4.0 player GUI + dual-mode installer
+
+Goal: ship the uncommitted player-GUI/detector work plus two usability
+fixes, then tag `v0.4.0` so GitHub Actions builds the Windows packages.
+
+Completed in this tree:
+
+- Remote Linux settings: `user@host` (IP or domain), SSH port (default 22),
+  optional OpenSSH identity file, Probe wired to `probe_remote_node`.
+  Passwords stay unsupported (`BatchMode=yes`). `RemoteNodeConfig` now
+  carries `port` and `identity_file`; ssh uses `-p`, sftp uses `-P`.
+- SFTP `get` on Windows no longer charset-rejects the local destination
+  path, so `remote-run` can fetch `result.json` into `D:\…` job directories.
+- Edit → Notes… and the hidden Notes page were removed from the GUI. CLI
+  `note-add` / `notes` remain.
+- Inno Setup: `PrivilegesRequiredOverridesAllowed=dialog` and
+  `DefaultDirName={autopf}\Auto-Shark`. User install stays under
+  `%LOCALAPPDATA%\Programs\Auto-Shark`; all-users install uses Program
+  Files. Projects stay in `%LOCALAPPDATA%\AutoShark\projects`.
+- Version metadata is 0.4.0.
+
+Verification (Windows Python 3.11, `UV_PROJECT_ENVIRONMENT` local venv,
+portable TShark 4.6.7):
+
+- `uv run ruff check src/auto_shark tests`: all checks passed.
+- `uv run pytest -q`: 346 passed in 45.42s (plus 8 remote tests after the
+  SFTP get fix).
+- Live Linux node (machine-local, not committed): `remote-probe` with
+  default keys and with `--identity`, `remote-setup` (`ok: true`), and
+  `remote-run` (`status: completed`, result JSON fetched).
+
+Player-first smoke from the previous slice is unchanged (see below).
+
+Active risks / remaining player work (do not bake oracles into code):
+
+1. Boolean-blind SQL reconstruction (`blind_injection`).
+2. OCR of carved JPEGs stays outside the core.
+3. Encrypted zip/rar are surfaced, never brute-forced.
+4. Do not bundle tshark.exe (GPL).
+
+Single next executable step: after `v0.4.0` is pushed, confirm the GitHub
+Actions release published Setup.exe, Portable.zip, wheel, sdist, and
+SHA256SUMS.
+
+## Previous checkpoint (2026-10-09) — settings/tables + remaining Notion traffic
+
+Goal: a CTF player can open a capture and get Chinese, low-learning-cost
+clues (and flags when the evidence is already in the index).
+
+Completed in this working tree (uncommitted with earlier GUI work):
+
+- Settings dialog is constructed with `_t()`: TShark path, 检测, Chinese
+  intro. Remote Linux fields are hidden behind
+  “显示高级选项：远程 Linux 节点（可选）” with an explanation that ordinary
+  traffic challenges do not use them.
+- TShark older than 4.0 is rejected (`TSHARK_TOO_OLD_TEMPLATE` with `{found}`).
+  `C:\Program Files\Wireshark\tshark.exe` 2.2.1 cannot be used; portable
+  4.6.7 is the working path.
+- Tables call `_fit_table_columns` (resize-to-contents, cap 720px, cell
+  tooltips) so Findings “看哪里” shows the USB typed-key flag instead of `…`.
+- USB HID applies Shift (0x02/0x20) and persists the typed string as a
+  rank-100 flag candidate.
+- Triage runs after Telnet/tcp-text reconstruction so Telnet flags become
+  candidates.
+- Zeroed classic-pcap global header is repaired into `project/repairs/`
+  without touching the original file.
+- Triage scans the working capture file (bounded 16 MiB) for `FLAG_PATTERN`
+  so flags that TShark never indexed still become candidates.
+- `decode_recognized` strips internal whitespace so newline-wrapped Base64
+  HTTP bodies (JPEG `/9j/…`) enter the transform chain and get carved.
+- ZIP GP-bit-0, RAR4 `MHD_PASSWORD`, and RAR5 file-extra type 1 persist a
+  `password-protected-archive` finding. Archives are never opened or brute-forced.
+- Non-pcap containers (MP3/ZIP/JPEG with appended archives) get a
+  `capture-bytes` parent, nested carve, and `nested-container` finding.
+- Wizard maps repair / encrypted archive / nested container / recovered files.
+
+Verification (Windows Python 3.11, `UV_PROJECT_ENVIRONMENT` local venv):
+
+- `uv run ruff check src/auto_shark tests`: all checks passed.
+- `uv run pytest` on recognize/triage/signatures/suggestions/pcap_repair/
+  i18n/carve/gui_widgets/gui_services/transforms/search/usb_hid/tshark/
+  project: 95 passed in 4.97s.
+- Re-smoke of remaining Notion projects used portable TShark 4.6.7 via
+  `AUTO_SHARK_TSHARK`. System Wireshark 2.2.1 stays rejected.
+
+Player-first smoke (oracles not used as solver constants):
+
+- 被嗅探的流量: auto-found `flag{da73d88936010da1eeeb36e945ec4b97}`; JPEG carved.
+- easycap: auto-found `FLAG:385b87afc8671dee07550290d16a8071`.
+- telnet: auto-found `flag{d316759c281bf925d600be698a4973d5}`.
+- USB 流量截取: auto-found `flag{pr355_0nwards_a2fee6e0}` (Shift applied).
+- 损坏的抓包: header repaired; capture-bytes scan auto-found
+  `flag{pc4p_f1x3d_r3c0v3ry}`; wizard “抓包文件头被清空，已自动修复”.
+- [NewStarCTF 2023]流量！鲨鱼！: auto-found
+  `flag{Wri35h4rk_1s_u53ful_b72a609537e6}`.
+- 数据包中的线索: Base64 JPEG carved to Files (`frame-000142-offset-0.jpg`,
+  63089 bytes). Flag is OCR of that JPEG (out of product scope).
+- 被偷走的文件: FTP `flag.rar` + `password-protected-archive` finding.
+  Auto-Shark does not brute the RAR.
+- 菜刀6666: WebShell + JPEG + encrypted ZIP finding. Flag is behind the
+  ZIP password (JPEG/stego), never brute-forced.
+- WireShark: HTTP login password candidate
+  `ffb7567a1d4f4abdffdb54e022f8facd`; PNG/JPEG carved.
+- blind_injection: SQL-injection finding present; boolean-blind value
+  reconstruction is not implemented.
+- 花点流量听听歌: MP3 is not a pcap; nested JPEG/ZIP/RAR5 carved; RAR5 is
+  password-protected. Wizard “这不是抓包，里面嵌套了文件”.
+
+Active risks / remaining player work (do not bake oracles into code):
+
+1. Boolean-blind SQL reconstruction (`blind_injection`).
+2. OCR of carved JPEGs (线索 / 菜刀 password image) stays outside the core.
+3. Encrypted zip/rar are surfaced, never brute-forced.
+4. GUI still requires a TShark 4.x path; do not bundle tshark.exe (GPL).
+
+Single next executable step: bounded boolean-blind reconstruction for
+HTTP SQL-injection captures (compare true/false response lengths, persist
+the recovered string as a candidate with exact URI evidence), then re-smoke
+`blind-injection`.
 
 ## Objective
 

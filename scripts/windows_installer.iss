@@ -22,10 +22,12 @@ AppVersion={#MyAppVersion}
 AppVerName={#MyAppName} {#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 VersionInfoVersion={#MyVersionInfo}
-DefaultDirName={localappdata}\Programs\Auto-Shark
+; {autopf} is Program Files when elevated, {localappdata}\Programs otherwise.
+DefaultDirName={autopf}\Auto-Shark
 DefaultGroupName=Auto-Shark
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
+PrivilegesRequiredOverridesAllowed=dialog
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir={#ReleaseDir}

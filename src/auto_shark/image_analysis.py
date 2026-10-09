@@ -93,6 +93,8 @@ def analyze_project_images(
     ssh_executable: Optional[Path] = None,
     sftp_executable: Optional[Path] = None,
     remote_root: str = DEFAULT_REMOTE_ROOT,
+    remote_port: int = 22,
+    identity_file: Optional[Path] = None,
     node_name: Optional[str] = None,
     max_artifacts: int = MAX_IMAGE_ARTIFACTS,
 ) -> ImageAnalysisSummary:
@@ -152,6 +154,8 @@ def analyze_project_images(
                         ssh_executable=ssh,
                         sftp_executable=sftp,
                         remote_root=remote_root,
+                        port=remote_port,
+                        identity_file=identity_file,
                     )
                 ),
                 manifest_path,

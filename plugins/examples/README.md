@@ -59,5 +59,7 @@ POSIX path on the node and every substituted argument token must be
 shell-safe. First probe the node, then run:
 
     auto-shark remote-probe --host <user@host> --path /usr/bin/python3
+    auto-shark remote-probe --host <user@host> --port 22 --identity ~/.ssh/id_ed25519 \
+        --path /usr/bin/python3 --path /usr/bin/binwalk
     auto-shark remote-run <project> <manifest.json> --artifact <artifact-id> \
         --host <user@host>

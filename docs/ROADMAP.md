@@ -141,7 +141,8 @@ all exit criteria are verified and recorded in `PROJECT_STATE.md`.
 - Windows launcher/package, licenses, notices, and clean-machine install test.
   Status: complete except the one-time hands-on clean-machine run: MIT
   LICENSE, THIRD_PARTY_NOTICES.md, `scripts/auto-shark-gui.cmd`, version
-  0.2.0 Beta, stable-root portable ZIP, stable-AppId per-user installer,
+  0.4.0 Beta, stable-root portable ZIP, stable-AppId installer with a
+  User vs all-users (Program Files) choice,
   README/user guide, and the scripted clean-machine procedure in
   `docs/RELEASE_CHECKLIST.md`.
 - Windows TShark 4.6.7 and Linux supported-profile CI.
@@ -187,3 +188,15 @@ all exit criteria are verified and recorded in `PROJECT_STATE.md`.
 - Published v0.3.0 after dual-Python real-TShark regression, schema/Blob audit,
   frozen CLI/GUI validation, v0.2.0 installer upgrade, independent CI, and
   downloaded-asset checksum/runtime verification.
+
+## v0.4.0 - player GUI and dual-mode Windows installer (complete)
+
+- Chinese solve-wizard GUI: sidebar 解题向导 / 文件 / HTTP / TCP 流 / 发现,
+  table autosize, TShark 4.0 floor, USB Shift typing, pcap header repair,
+  capture-bytes FLAG scan, nested-container carve, encrypted-archive findings.
+- Remote Linux settings and CLI accept `user@host`, SSH port, and an OpenSSH
+  identity file. SFTP get accepts Windows local destinations so `remote-run`
+  can fetch results. GUI Notes page removed.
+- Windows installer offers per-user (`%LOCALAPPDATA%\Programs\Auto-Shark`) or
+  all-users (`Program Files\Auto-Shark`). Analysis projects stay under
+  `%LOCALAPPDATA%\AutoShark\projects`.

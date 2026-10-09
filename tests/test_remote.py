@@ -160,6 +160,20 @@ def test_find_ssh_tools_and_config_validation(tmp_path) -> None:
             sftp_executable=tmp_path / "sftp.exe",
             remote_root="../escape",
         ).validate()
+    with pytest.raises(ValueError, match="port"):
+        RemoteNodeConfig(
+            host="root@node.example",
+            ssh_executable=tmp_path / "ssh.exe",
+            sftp_executable=tmp_path / "sftp.exe",
+            port=0,
+        ).validate()
+    with pytest.raises(FileNotFoundError, match="identity"):
+        RemoteNodeConfig(
+            host="root@node.example",
+            ssh_executable=tmp_path / "ssh.exe",
+            sftp_executable=tmp_path / "sftp.exe",
+            identity_file=tmp_path / "missing-key",
+        ).validate()
 
 
 def test_ssh_transport_argv_and_batch_are_constrained(tmp_path) -> None:
@@ -176,12 +190,45 @@ def test_ssh_transport_argv_and_batch_are_constrained(tmp_path) -> None:
     assert argv[0].endswith("ssh.exe")
     assert argv[-4:] == ["root@node.example", "test", "-x", "/usr/local/bin/analyze"]
     assert "BatchMode=yes" in argv
+    assert argv[argv.index("-p") + 1] == "22"
     with pytest.raises(ValueError):
         transport.ssh_argv(["test", "-x", "/opt/tool;rm -rf /"])
+
+
+def test_ssh_transport_uses_custom_port_and_identity(tmp_path) -> None:
+    (tmp_path / "ssh.exe").write_bytes(b"")
+    (tmp_path / "sftp.exe").write_bytes(b"")
+    key = tmp_path / "id_ed25519"
+    key.write_bytes(b"dummy-key")
+    transport = SshTransport(
+        RemoteNodeConfig(
+            host="root@node.example",
+            ssh_executable=tmp_path / "ssh.exe",
+            sftp_executable=tmp_path / "sftp.exe",
+            port=2222,
+            identity_file=key,
+        )
+    )
+    argv = transport.ssh_argv(["test", "-x", "/usr/bin/python3"])
+    assert argv[argv.index("-p") + 1] == "2222"
+    assert argv[argv.index("-i") + 1] == str(key)
+    assert "IdentitiesOnly=yes" in argv
     batch = transport.sftp_batch_text(
         [("put", r"C:\work\file.bin", ".auto-shark-jobs/j1/input/file.bin")]
     )
     assert batch == 'put "C:/work/file.bin" ".auto-shark-jobs/j1/input/file.bin"\n'
+    fetched = transport.sftp_batch_text(
+        [
+            (
+                "get",
+                ".auto-shark-jobs/j1/output/result.json",
+                r"D:\Temp\out\result.json",
+            )
+        ]
+    )
+    assert fetched == (
+        'get ".auto-shark-jobs/j1/output/result.json" "D:/Temp/out/result.json"\n'
+    )
     with pytest.raises(ValueError):
         transport.sftp_batch_text([("get", "../etc/passwd", "x")])
 
@@ -203,6 +250,7 @@ def test_sftp_transfer_uses_and_cleans_a_system_temporary_batch(tmp_path, monkey
     def fake_run(argv, **_kwargs):
         nonlocal observed_batch
         observed_batch = Path(argv[argv.index("-b") + 1])
+        assert argv[argv.index("-P") + 1] == "22"
         assert observed_batch.is_file()
         assert str(source).replace("\\", "/") in observed_batch.read_text(encoding="utf-8")
         return ProcessResult(tuple(argv), 0, b"", b"", False, False, False, False)

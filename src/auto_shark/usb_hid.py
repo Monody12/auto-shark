@@ -11,10 +11,11 @@ from io import StringIO
 from pathlib import Path
 from uuid import uuid4
 
-from .core.ids import stable_id
+from .core.ids import candidate_id, stable_id
 from .engines.stream import run_streaming_lines
 from .engines.tshark import probe_tshark
 from .project import inspect_project
+from .search import FLAG_PATTERN, _plausible_flag
 from .storage import Database
 
 USB_HID_FIELDS = (
@@ -48,6 +49,30 @@ _KEY_NAMES = {
     55: ".",
     56: "/",
 }
+_SHIFT_NAMES = {
+    "1": "!",
+    "2": "@",
+    "3": "#",
+    "4": "$",
+    "5": "%",
+    "6": "^",
+    "7": "&",
+    "8": "*",
+    "9": "(",
+    "0": ")",
+    "-": "_",
+    "=": "+",
+    "[": "{",
+    "]": "}",
+    "\\": "|",
+    ";": ":",
+    "'": '"',
+    "`": "~",
+    ",": "<",
+    ".": ">",
+    "/": "?",
+}
+_SHIFT_MODIFIER = 0x22  # left or right Shift in the boot-keyboard modifier byte
 
 
 def _now() -> str:
@@ -132,17 +157,48 @@ def tshark_usb_hid_arguments(executable: Path, capture: Path) -> list[str]:
     return arguments
 
 
+def _key_glyph(code: int, shift: bool) -> str:
+    base = _KEY_NAMES.get(code)
+    if base is None:
+        return f"key-0x{code:02x}"
+    if shift and len(base) == 1 and "a" <= base <= "z":
+        return base.upper()
+    if shift:
+        return _SHIFT_NAMES.get(base, base)
+    return base
+
+
 def _keyboard_events(reports: list[UsbReport]) -> tuple[str, ...]:
     events: list[str] = []
     previous: set[int] = set()
     for report in reports:
         if len(report.data) != 8:
             continue
+        shift = bool(report.data[0] & _SHIFT_MODIFIER)
         pressed = {code for code in report.data[2:] if code}
         for code in sorted(pressed - previous):
-            events.append(_KEY_NAMES.get(code, f"key-0x{code:02x}"))
+            events.append(_key_glyph(code, shift))
         previous = pressed
     return tuple(events[:256])
+
+
+def typed_string(events: tuple[str, ...]) -> str:
+    """Collapse key-down names into the text a keyboard would have typed."""
+
+    chars: list[str] = []
+    for event in events:
+        if event == "backspace":
+            if chars:
+                chars.pop()
+            continue
+        if event == "space":
+            chars.append(" ")
+            continue
+        if event in {"enter", "esc", "tab"} or event.startswith("key-"):
+            continue
+        if len(event) == 1:
+            chars.append(event)
+    return "".join(chars)
 
 
 def _is_keyboard_like(reports: list[UsbReport]) -> bool:
@@ -177,6 +233,34 @@ def _pointer_ranges(
     return (min(xs), max(xs), min(ys), max(ys)), (min(pressures), max(pressures))
 
 
+def _persist_typed_flag(connection, evidence_db_id: int, typed: str) -> None:
+    encoded = typed.encode("utf-8")
+    for match in FLAG_PATTERN.finditer(encoded):
+        value = match.group()
+        if not _plausible_flag(value):
+            continue
+        text = value.decode("utf-8", errors="replace")
+        public_id = candidate_id("known-flag", text.strip())
+        connection.execute(
+            "INSERT INTO candidate(candidate_id,kind,raw_value,normalized_value,"
+            "confidence,rank_score,created_at) VALUES(?,?,?,?,?,?,?) "
+            "ON CONFLICT(candidate_id) DO UPDATE SET "
+            "confidence=max(candidate.confidence,excluded.confidence),"
+            "rank_score=max(candidate.rank_score,excluded.rank_score)",
+            (public_id, "known-flag", text, text.strip(), 0.95, 96.0, _now()),
+        )
+        candidate_db_id = int(
+            connection.execute(
+                "SELECT id FROM candidate WHERE candidate_id=?", (public_id,)
+            ).fetchone()[0]
+        )
+        connection.execute(
+            "INSERT OR IGNORE INTO candidate_evidence(candidate_id,evidence_id,role) "
+            "VALUES(?,?,?)",
+            (candidate_db_id, evidence_db_id, "usb-typed-keys"),
+        )
+
+
 def _persist_endpoint(
     database: Database,
     capture_id: int,
@@ -188,6 +272,7 @@ def _persist_endpoint(
     lengths = dict(sorted(Counter(len(item.data) for item in reports).items()))
     keyboard_like = _is_keyboard_like(reports)
     keys = _keyboard_events(reports) if keyboard_like else ()
+    typed = typed_string(keys) if keys else ""
     pointer = _pointer_ranges(reports)
     if keyboard_like and keys:
         classification = "boot-keyboard-like"
@@ -211,8 +296,9 @@ def _persist_endpoint(
         "report_lengths": lengths,
         "reports": len(reports),
         "samples": [item.data.hex() for item in reports[:8]],
+        "typed_string": typed,
     }
-    text = ", ".join(keys) if keys else classification
+    text = typed or (", ".join(keys) if keys else classification)
     with database.connect() as connection:
         connection.execute(
             "INSERT INTO evidence(evidence_id,capture_id,source_kind,frame_start,frame_end,"
@@ -240,9 +326,11 @@ def _persist_endpoint(
         if classification != "unclassified":
             finding_public_id = stable_id("usb-hid-endpoint-finding", identity)
             if classification == "boot-keyboard-like":
+                typed_clause = f" Typed string: {typed}." if typed else ""
                 description = (
                     f"USB source {reports[0].source} has {len(reports)} keyboard-like "
                     f"8-byte reports. Key-down sequence preview: {', '.join(keys[:80])}."
+                    f"{typed_clause}"
                 )
                 action = (
                     "Review key-down/release edges and correlate held keys with other USB devices."
@@ -283,6 +371,8 @@ def _persist_endpoint(
                 "VALUES(?,?,?)",
                 (finding_db_id, evidence_db_id, "usb-report-series"),
             )
+            if typed:
+                _persist_typed_flag(connection, evidence_db_id, typed)
     return UsbEndpointResult(
         reports[0].source,
         reports[0].endpoint,

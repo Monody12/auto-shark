@@ -16,7 +16,7 @@ from uuid import uuid4
 from .core.ids import EvidenceLocator, evidence_id
 from .engines.hexstream import run_hex_to_file
 from .engines.stream import run_streaming_lines
-from .engines.tshark import TlsRsaKey, TsharkCapabilities, probe_tshark
+from .engines.tshark import TlsKeylog, TlsRsaKey, TsharkCapabilities, probe_tshark
 from .project import ProjectInfo, inspect_project
 from .storage import BlobStore, Database
 
@@ -264,6 +264,7 @@ def extract_http_bodies_batch(
     max_total_bytes: int,
     capabilities: Optional[TsharkCapabilities] = None,
     tls_rsa_key: Optional[TlsRsaKey] = None,
+    tls_keylog: Optional[TlsKeylog] = None,
 ) -> BodyBatchExtractionSummary:
     frames = tuple(dict.fromkeys(int(frame) for frame in frame_numbers))
     if not frames or any(frame <= 0 for frame in frames):
@@ -290,11 +291,18 @@ def extract_http_bodies_batch(
     if missing_rows:
         raise ValueError(f"frames are not indexed HTTP messages: {missing_rows[:8]}")
 
-    preferences = tls_rsa_key.arguments if tls_rsa_key is not None else ()
+    preferences = [
+        *(tls_rsa_key.arguments if tls_rsa_key is not None else ()),
+        *(tls_keylog.arguments if tls_keylog is not None else ()),
+    ]
     argv = _batch_body_arguments(
         tshark, project.capture_path, frames, preferences=preferences
     )
-    provenance_argv = tls_rsa_key.redact_argv(argv) if tls_rsa_key is not None else argv
+    provenance_argv = list(argv)
+    if tls_rsa_key is not None:
+        provenance_argv = tls_rsa_key.redact_argv(provenance_argv)
+    if tls_keylog is not None:
+        provenance_argv = tls_keylog.redact_argv(provenance_argv)
     run_public_id = uuid4().hex
     with database.connect() as connection:
         connection.execute(
@@ -305,7 +313,9 @@ def extract_http_bodies_batch(
                 run_public_id,
                 capabilities.version_line,
                 json.dumps(provenance_argv, ensure_ascii=False),
-                capabilities.to_provenance_json(tls_rsa_key=tls_rsa_key),
+                capabilities.to_provenance_json(
+                    tls_rsa_key=tls_rsa_key, tls_keylog=tls_keylog
+                ),
                 _utc_now(),
             ),
         )
@@ -397,6 +407,7 @@ def extract_http_body(
     max_body_bytes: int,
     capabilities: Optional[TsharkCapabilities] = None,
     tls_rsa_key: Optional[TlsRsaKey] = None,
+    tls_keylog: Optional[TlsKeylog] = None,
 ) -> BodyExtractionSummary:
     if frame_number <= 0:
         raise ValueError("frame number must be positive")
@@ -418,11 +429,18 @@ def extract_http_body(
     if row is None:
         raise ValueError(f"frame {frame_number} is not an indexed HTTP message")
 
-    preferences = tls_rsa_key.arguments if tls_rsa_key is not None else ()
+    preferences = [
+        *(tls_rsa_key.arguments if tls_rsa_key is not None else ()),
+        *(tls_keylog.arguments if tls_keylog is not None else ()),
+    ]
     argv = _body_arguments(
         tshark, project.capture_path, frame_number, preferences=preferences
     )
-    provenance_argv = tls_rsa_key.redact_argv(argv) if tls_rsa_key is not None else argv
+    provenance_argv = list(argv)
+    if tls_rsa_key is not None:
+        provenance_argv = tls_rsa_key.redact_argv(provenance_argv)
+    if tls_keylog is not None:
+        provenance_argv = tls_keylog.redact_argv(provenance_argv)
     run_public_id = uuid4().hex
     started_at = _utc_now()
     with database.connect() as connection:
@@ -434,7 +452,9 @@ def extract_http_body(
                 run_public_id,
                 capabilities.version_line,
                 json.dumps(provenance_argv, ensure_ascii=False),
-                capabilities.to_provenance_json(tls_rsa_key=tls_rsa_key),
+                capabilities.to_provenance_json(
+                    tls_rsa_key=tls_rsa_key, tls_keylog=tls_keylog
+                ),
                 started_at,
             ),
         )

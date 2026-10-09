@@ -11,7 +11,7 @@ from typing import Optional
 from .analysis import AnalysisSummary, analyze_http
 from .body import BodyExtractionSummary, extract_http_bodies_batch, extract_http_body
 from .core.ids import stable_id
-from .engines.tshark import TlsRsaKey, probe_tshark
+from .engines.tshark import TlsKeylog, TlsRsaKey, probe_tshark
 from .pipeline import ScanSummary, scan_project
 from .storage import Database
 
@@ -148,6 +148,7 @@ def extract_selected_http_bodies(
     max_body_bytes: int,
     max_total_bytes: int,
     tls_rsa_key: Optional[TlsRsaKey] = None,
+    tls_keylog: Optional[TlsKeylog] = None,
 ) -> BodyRunSummary:
     if max_body_bytes <= 0 or max_total_bytes <= 0:
         raise ValueError("body extraction budgets must be positive")
@@ -197,6 +198,7 @@ def extract_selected_http_bodies(
                 max_total_bytes=remaining,
                 capabilities=capabilities,
                 tls_rsa_key=tls_rsa_key,
+                tls_keylog=tls_keylog,
             )
         except (OSError, TimeoutError, ValueError):
             batch_summary = None
@@ -246,13 +248,14 @@ def extract_selected_http_bodies(
                 continue
             allocation = min(max_body_bytes, remaining)
             try:
-                summary = extract_http_body(
+                summary = extract_http_body(  # per-frame fallback
                     project,
                     target.frame_number,
                     tshark,
                     max_body_bytes=allocation,
                     capabilities=capabilities,
                     tls_rsa_key=tls_rsa_key,
+                    tls_keylog=tls_keylog,
                 )
             except (OSError, TimeoutError, ValueError) as error:
                 _upsert_task(
@@ -298,6 +301,7 @@ def analyze_with_bodies(
     max_total_bytes: int,
     run_scan: bool,
     tls_rsa_key: Optional[TlsRsaKey] = None,
+    tls_keylog: Optional[TlsKeylog] = None,
 ) -> WorkflowSummary:
     analysis = analyze_http(
         capture,
@@ -305,6 +309,7 @@ def analyze_with_bodies(
         tshark,
         matching_uri=uri,
         tls_rsa_key=tls_rsa_key,
+        tls_keylog=tls_keylog,
     )
     bodies = extract_selected_http_bodies(
         project,
@@ -313,6 +318,7 @@ def analyze_with_bodies(
         max_body_bytes=max_body_bytes,
         max_total_bytes=max_total_bytes,
         tls_rsa_key=tls_rsa_key,
+        tls_keylog=tls_keylog,
     )
     scan = scan_project(project) if run_scan else None
     return WorkflowSummary(analysis=analysis, bodies=bodies, scan=scan)

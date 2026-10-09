@@ -107,6 +107,40 @@ def create_project(
     return ProjectInfo(root, capture, capture_sha256, capture_bytes, SCHEMA_VERSION)
 
 
+def read_flag_format(project_path: Path) -> Optional[str]:
+    """Return the project's user-declared flag format, if any."""
+
+    root = Path(project_path).expanduser().resolve()
+    manifest_path = root / "project.json"
+    if not manifest_path.is_file():
+        return None
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    value = manifest.get("flag_format")
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def write_flag_format(project_path: Path, pattern: Optional[str]) -> None:
+    """Persist (or clear) the user-declared flag format in the manifest."""
+
+    root = Path(project_path).expanduser().resolve()
+    manifest_path = root / "project.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    cleaned = pattern.strip() if isinstance(pattern, str) else ""
+    if cleaned:
+        manifest["flag_format"] = cleaned
+    else:
+        manifest.pop("flag_format", None)
+    temporary = manifest_path.with_suffix(".json.tmp")
+    temporary.write_text(
+        json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    os.replace(temporary, manifest_path)
+
+
 def inspect_project(project_path: Path) -> ProjectInfo:
     root = Path(project_path).expanduser().resolve()
     manifest_path = root / "project.json"
@@ -119,9 +153,13 @@ def inspect_project(project_path: Path) -> ProjectInfo:
     with database.connect() as connection:
         schema = int(connection.execute("PRAGMA user_version").fetchone()[0])
     capture = manifest["capture"]
+    working = capture.get("working_path")
+    capture_path = (
+        Path(working) if working and Path(str(working)).is_file() else Path(capture["path"])
+    )
     return ProjectInfo(
         root=root,
-        capture_path=Path(capture["path"]),
+        capture_path=capture_path,
         capture_sha256=str(capture["sha256"]),
         capture_bytes=int(capture["byte_length"]),
         database_schema=schema,

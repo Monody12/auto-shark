@@ -10,10 +10,12 @@ from pathlib import Path
 from typing import Optional
 from uuid import uuid4
 
+from .core.hashing import hash_file
 from .core.ids import stable_id
 from .engines.stream import run_streaming_lines
-from .engines.tshark import TlsRsaKey, probe_tshark
-from .project import create_project
+from .engines.tshark import TlsKeylog, TlsRsaKey, probe_tshark
+from .pcap_repair import ensure_working_capture
+from .project import ProjectInfo, create_project, inspect_project
 from .protocols.http import HttpMessage, parse_http_line, tshark_http_arguments
 from .storage import Database
 
@@ -288,6 +290,35 @@ def _summary(
     )
 
 
+def open_or_create_project(capture: Path, project: Path) -> ProjectInfo:
+    """Idempotent project access for re-analysis runs.
+
+    The GUI creates the project directory when a capture is opened, then the
+    analyze stage runs on the same directory; a strict ``create_project``
+    would raise ``FileExistsError`` there and silently (via stage guards)
+    leave every HTTP page empty. Reuse the existing manifest when it belongs
+    to the same capture bytes and reject a mismatched directory explicitly.
+    """
+
+    capture_path = Path(capture).expanduser().resolve()
+    root = Path(project).expanduser().resolve()
+    manifest = root / "project.json"
+    if manifest.is_file():
+        info = inspect_project(root)
+        if info.capture_sha256 == _capture_sha256(capture_path):
+            return info
+        raise ValueError(
+            f"project directory belongs to a different capture: {root}; "
+            "choose a new project directory for this capture"
+        )
+    return create_project(capture_path, root)
+
+
+def _capture_sha256(capture: Path) -> str:
+    digest, _length = hash_file(capture)
+    return digest
+
+
 def analyze_http(
     capture: Path,
     project: Path,
@@ -295,15 +326,25 @@ def analyze_http(
     *,
     matching_uri: Optional[str] = None,
     tls_rsa_key: Optional[TlsRsaKey] = None,
+    tls_keylog: Optional[TlsKeylog] = None,
 ) -> AnalysisSummary:
     capabilities = probe_tshark(tshark)
     if not capabilities.usable or not capabilities.features.get("http", False):
         raise ValueError("TShark lacks required HTTP capabilities")
-    project_info = create_project(capture, project)
+    project_info = open_or_create_project(capture, project)
+    ensure_working_capture(project_info.root)
+    project_info = inspect_project(project_info.root)
     database = Database(project_info.root / "project.sqlite")
-    preferences = tls_rsa_key.arguments if tls_rsa_key is not None else ()
+    preferences = [
+        *(tls_rsa_key.arguments if tls_rsa_key is not None else ()),
+        *(tls_keylog.arguments if tls_keylog is not None else ()),
+    ]
     argv = tshark_http_arguments(tshark, project_info.capture_path, preferences=preferences)
-    provenance_argv = tls_rsa_key.redact_argv(argv) if tls_rsa_key is not None else argv
+    provenance_argv = list(argv)
+    if tls_rsa_key is not None:
+        provenance_argv = tls_rsa_key.redact_argv(provenance_argv)
+    if tls_keylog is not None:
+        provenance_argv = tls_keylog.redact_argv(provenance_argv)
     run_public_id = uuid4().hex
     with database.connect() as connection:
         capture_db_id = int(
@@ -319,7 +360,9 @@ def analyze_http(
                 run_public_id,
                 capabilities.version_line,
                 json.dumps(provenance_argv, ensure_ascii=False),
-                capabilities.to_provenance_json(tls_rsa_key=tls_rsa_key),
+                capabilities.to_provenance_json(
+                    tls_rsa_key=tls_rsa_key, tls_keylog=tls_keylog
+                ),
                 _utc_now(),
             ),
         )

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -13,9 +13,20 @@ from typing import Optional
 class GuiSettings:
     tshark_path: Optional[str] = None
     remote_host: Optional[str] = None
+    remote_port: int = 22
+    ssh_identity: Optional[str] = None
     ssh_path: Optional[str] = None
     sftp_path: Optional[str] = None
     remote_root: str = ".auto-shark-jobs"
+    recent_captures: list[str] = field(default_factory=list)
+    flag_format: str = ""
+
+    def remember_capture(self, path: Path) -> None:
+        entry = str(Path(path).resolve())
+        entries = [entry] + [
+            item for item in self.recent_captures if Path(item).resolve() != Path(entry).resolve()
+        ]
+        self.recent_captures = entries[:10]
 
 
 def settings_path() -> Path:
@@ -34,9 +45,15 @@ def load_settings() -> GuiSettings:
     if not isinstance(document, dict):
         return GuiSettings()
     known = {field for field in GuiSettings.__dataclass_fields__}
-    return GuiSettings(
-        **{key: value for key, value in document.items() if key in known}
-    )
+    values = {key: value for key, value in document.items() if key in known}
+    raw_port = values.get("remote_port", 22)
+    try:
+        values["remote_port"] = int(raw_port)
+    except (TypeError, ValueError):
+        values["remote_port"] = 22
+    if not 1 <= int(values["remote_port"]) <= 65535:
+        values["remote_port"] = 22
+    return GuiSettings(**values)
 
 
 def save_settings(settings: GuiSettings) -> None:

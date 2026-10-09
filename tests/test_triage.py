@@ -462,3 +462,16 @@ def test_triage_rejects_placeholders_and_nonpositive_limits(tmp_path) -> None:
 
     with pytest.raises(ValueError, match="positive"):
         triage_project(root, max_total_bytes=0)
+
+
+def test_triage_scans_capture_file_for_known_flags(tmp_path) -> None:
+    capture = tmp_path / "broken.pcap"
+    capture.write_bytes(b"HTTP/1.1 200 OK\r\n\r\nflag{pc4p_f1x3d_r3c0v3ry}\n")
+    root = tmp_path / "broken.auto-shark"
+    create_project(capture, root)
+    summary = triage_project(root)
+    assert summary.known_matches == 1
+    assert summary.candidates[0].kind == "flag"
+    assert summary.candidates[0].value == "flag{pc4p_f1x3d_r3c0v3ry}"
+    again = triage_project(root)
+    assert again.candidates[0].value == summary.candidates[0].value

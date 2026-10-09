@@ -64,6 +64,7 @@ def test_triage_cli_forwards_limits_and_emits_schema(monkeypatch, capsys, tmp_pa
     assert result == 0
     assert received == {
         "project": project,
+        "flag_pattern": None,
         "max_evidence": 7,
         "max_evidence_bytes": 11,
         "max_total_bytes": 13,

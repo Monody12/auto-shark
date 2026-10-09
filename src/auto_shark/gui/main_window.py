@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import suppress
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -16,55 +17,95 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QMessageBox,
     QPlainTextEdit,
     QProgressDialog,
     QPushButton,
+    QSpinBox,
     QSplitter,
     QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from ..config import Settings
-from ..engines.tshark import TlsRsaKey, load_tls_rsa_key
+from ..engines.tshark import (
+    TSHARK_TOO_OLD_TEMPLATE,
+    TlsRsaKey,
+    _tshark_version,
+    find_tls_keylog,
+    load_tls_keylog,
+    load_tls_rsa_key,
+    tshark_too_old,
+)
 from ..project import ProjectInfo, create_project
 from .i18n import apply_widget_translations, detect_language, translate
 from .services import PAGE_LIMIT, ProjectServices, resolve_tshark
 from .settings import GuiSettings, load_settings, save_settings
 from .workers import SingleRunWorker, StageWorker
 
-PAGE_NAMES = (
+CORE_PAGES = (
     "Overview",
+    "Files",
     "HTTP",
     "Streams",
-    "Telnet",
     "Findings",
-    "Timeline",
-    "Manual queue",
-    "Notes",
-    "Export",
 )
-REVIEW_STATES = ("unreviewed", "needs_review", "excluded", "key_evidence")
-SUBJECT_KINDS = (
-    "candidate",
-    "finding",
-    "artifact",
-    "behavior-event",
-    "manual-task",
-    "evidence",
+OPTIONAL_PAGES = ("Telnet",)
+HIDDEN_PAGES = ("Export",)
+PAGE_NAMES = CORE_PAGES
+STACK_PAGES = CORE_PAGES + OPTIONAL_PAGES + HIDDEN_PAGES
+HELP_BODY = (
+    "1. Drag a .pcap / .pcapng onto the window (or File > Open capture). "
+    "Analysis starts automatically.\n"
+    "2. Read the solve wizard: protocol mix, challenge type, and flag "
+    "candidates. Double-click a suggestion to jump to the evidence.\n"
+    "3. Double-click a flag candidate to copy it. If the contest uses a "
+    "custom wrapper, enter that regex and press Rescan.\n"
+    "4. Files lists exported objects. HTTP and TCP streams follow the "
+    "conversation. Telnet appears only when that traffic exists.\n"
+    "5. Findings lists flags, exam points, and the reconstructed "
+    "operation log. Tick Technical details for the raw JSON.\n"
+    "Search everywhere is the strings | grep replacement "
+    "(plain text, hex, and Base64)."
 )
 TASK_STATES = ("open", "in-progress", "resolved", "dismissed")
+DEFAULT_REMOTE_PROBE_PATHS = (
+    "/usr/bin/python3,/usr/bin/file,/usr/bin/strings,/usr/bin/binwalk,"
+    "/usr/local/bin/binwalk,/usr/bin/zsteg,/usr/local/bin/zsteg,"
+    "/usr/bin/steghide,/usr/bin/exiftool,/usr/bin/tshark"
+)
+
+
+_MAX_TABLE_COLUMN_WIDTH = 720
 
 
 def _cell(value: Any) -> QTableWidgetItem:
-    return QTableWidgetItem("" if value is None else str(value))
+    text = "" if value is None else str(value)
+    item = QTableWidgetItem(text)
+    item.setToolTip(text)
+    return item
+
+
+def _fit_table_columns(table: QTableWidget) -> None:
+    """Size columns to their contents, then cap runaway cells and stretch the last."""
+
+    header = table.horizontalHeader()
+    header.setStretchLastSection(False)
+    table.resizeColumnsToContents()
+    for column in range(table.columnCount()):
+        width = table.columnWidth(column) + 12
+        table.setColumnWidth(column, min(max(width, 72), _MAX_TABLE_COLUMN_WIDTH))
+    header.setStretchLastSection(True)
 
 
 def _table(headers: tuple[str, ...]) -> QTableWidget:
@@ -73,7 +114,13 @@ def _table(headers: tuple[str, ...]) -> QTableWidget:
     widget.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
     widget.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
     widget.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-    widget.horizontalHeader().setStretchLastSection(True)
+    widget.setWordWrap(False)
+    widget.setTextElideMode(Qt.TextElideMode.ElideRight)
+    widget.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+    header = widget.horizontalHeader()
+    header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+    header.setStretchLastSection(True)
+    header.setMinimumSectionSize(72)
     return widget
 
 
@@ -97,13 +144,38 @@ class MainWindow(QMainWindow):
         self._finding_items: list = []
         self._timeline_items: list = []
         self._queue_items: list = []
-        self._note_items: list = []
         self._language = detect_language()
         self.setWindowTitle("Auto-Shark")
         self.resize(1280, 820)
+        self.setAcceptDrops(True)
         self._build_menu()
         self._build_body()
         apply_widget_translations(self, self._language)
+
+    # ------------------------------------------------------------ drag & drop
+
+    def dragEnterEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        if event.mimeData().hasUrls():
+            for url in event.mimeData().urls():
+                if url.isLocalFile() and Path(url.toLocalFile()).suffix.lower() in (
+                    ".pcap",
+                    ".pcapng",
+                ):
+                    event.acceptProposedAction()
+                    return
+        event.ignore()
+
+    def dropEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        for url in event.mimeData().urls():
+            if not url.isLocalFile():
+                continue
+            capture = Path(url.toLocalFile())
+            if capture.suffix.lower() not in (".pcap", ".pcapng"):
+                continue
+            self.open_capture_file(capture)
+            event.acceptProposedAction()
+            return
+        event.ignore()
 
     def _t(self, text: str) -> str:
         return translate(text, self._language)
@@ -120,13 +192,16 @@ class MainWindow(QMainWindow):
         action = file_menu.addAction("&New project from capture…")
         action.triggered.connect(self._new_project_dialog)
         file_menu.addSeparator()
+        action = file_menu.addAction("Export analysis bundle…")
+        action.triggered.connect(self._export_bundle)
+        file_menu.addSeparator()
         action = file_menu.addAction("E&xit")
         action.triggered.connect(self.close)
         edit_menu = menu.addMenu("&Edit")
         action = edit_menu.addAction("&Settings…")
         action.triggered.connect(self._settings_dialog)
         analysis_menu = menu.addMenu("&Analysis")
-        action = analysis_menu.addAction("&Run full analysis")
+        action = analysis_menu.addAction("&Re-run full analysis")
         action.triggered.connect(self.run_analysis)
         self._cancel_action = analysis_menu.addAction("&Cancel running analysis")
         self._cancel_action.triggered.connect(self.cancel_analysis)
@@ -134,37 +209,46 @@ class MainWindow(QMainWindow):
         analysis_menu.addSeparator()
         action = analysis_menu.addAction("&Refresh page")
         action.triggered.connect(self.refresh_current_page)
+        help_menu = menu.addMenu("&Help")
+        action = help_menu.addAction("&How to use")
+        action.triggered.connect(self._show_help)
+        help_button = QToolButton()
+        help_button.setText("?")
+        help_button.setToolTip(self._t("How to use"))
+        help_button.clicked.connect(self._show_help)
+        menu.setCornerWidget(help_button)
+        self._help_button = help_button
 
     def _build_body(self) -> None:
         splitter = QSplitter()
         self._nav = QListWidget()
-        for name in PAGE_NAMES:
-            self._nav.addItem(name)
-        self._nav.setCurrentRow(0)
         self._nav.currentRowChanged.connect(self._nav_changed)
         splitter.addWidget(self._nav)
         self._stack = QStackedWidget()
         builders: dict[str, Callable[[], QWidget]] = {
             "Overview": self._build_overview_page,
+            "Files": self._build_files_page,
             "HTTP": self._build_http_page,
             "Streams": self._build_streams_page,
             "Telnet": self._build_telnet_page,
             "Findings": self._build_findings_page,
-            "Timeline": self._build_timeline_page,
-            "Manual queue": self._build_queue_page,
-            "Notes": self._build_notes_page,
             "Export": self._build_export_page,
         }
-        for name in PAGE_NAMES:
+        for name in STACK_PAGES:
             page = builders[name]()
             self._pages[name] = page
             self._stack.addWidget(page)
+        self._aux_banner = QLabel("")
+        self._aux_banner.hide()
+        self._banners["Timeline"] = self._aux_banner
+        self._banners["Manual queue"] = self._aux_banner
         splitter.addWidget(self._stack)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
-        splitter.setSizes([220, 1060])
+        splitter.setSizes([180, 1100])
         self.setCentralWidget(splitter)
         self._register_refreshers()
+        self._rebuild_nav()
         self.statusBar().showMessage(self._t("No project open"))
 
     def _page_scaffold(self, name: str, body: QWidget) -> QWidget:
@@ -187,15 +271,138 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------- page build
 
     def _build_overview_page(self) -> QWidget:
-        body = QWidget()
-        layout = QVBoxLayout(body)
+        return self._page_scaffold("Overview", self._build_overview_stack())
+
+    def _build_overview_stack(self) -> QStackedWidget:
+        self._overview_stack = QStackedWidget()
+
+        start = QWidget()
+        start_layout = QVBoxLayout(start)
+        start_layout.addStretch(1)
+        hint = QLabel("Drop a .pcap / .pcapng file here to analyze it")
+        hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._start_hint = hint
+        start_layout.addWidget(hint)
+        secondary = QLabel("…or use File > Open capture. Analysis starts automatically.")
+        secondary.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        start_layout.addWidget(secondary)
+        self._start_tshark_status = QLabel("")
+        self._start_tshark_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        start_layout.addWidget(self._start_tshark_status)
+        self._start_recent = QListWidget()
+        self._start_recent.itemDoubleClicked.connect(self._open_recent_capture)
+        start_layout.addWidget(self._start_recent, 1)
+        start_layout.addStretch(1)
+        self._overview_stack.addWidget(start)
+
+        report = QWidget()
+        report_layout = QVBoxLayout(report)
+
+        flag_row = QHBoxLayout()
+        flag_row.addWidget(QLabel("Flag format (regex):"))
+        self._flag_format_edit = QLineEdit()
+        self._flag_format_edit.setPlaceholderText("e.g. SUCTF\\{[^}]{1,128}\\}")
+        flag_row.addWidget(self._flag_format_edit, 1)
+        rescan_button = QPushButton("Rescan")
+        rescan_button.clicked.connect(self._rescan_flag_format)
+        flag_row.addWidget(rescan_button)
+        report_layout.addLayout(flag_row)
+
+        search_row = QHBoxLayout()
+        search_row.addWidget(QLabel("Search everywhere:"))
+        self._grep_edit = QLineEdit()
+        self._grep_edit.setPlaceholderText("keyword, e.g. flag / password / PK")
+        self._grep_edit.returnPressed.connect(self._run_grep)
+        search_row.addWidget(self._grep_edit, 1)
+        grep_button = QPushButton("Search")
+        grep_button.clicked.connect(self._run_grep)
+        search_row.addWidget(grep_button)
+        report_layout.addLayout(search_row)
+
+        self._wizard_hierarchy = QLabel("")
+        self._wizard_hierarchy.setWordWrap(True)
+        report_layout.addWidget(self._wizard_hierarchy)
+
+        report_layout.addWidget(QLabel("Challenge types:"))
+        self._suggestions_table = _table(("Type", "Evidence", "Suggestion"))
+        self._suggestions_table.itemDoubleClicked.connect(self._open_suggestion)
+        report_layout.addWidget(self._suggestions_table, 2)
+
+        report_layout.addWidget(QLabel("Flag candidates (double-click to copy):"))
+        self._wizard_candidates = _table(("Value", "Kind", "Rank"))
+        self._wizard_candidates.itemDoubleClicked.connect(self._copy_candidate)
+        report_layout.addWidget(self._wizard_candidates, 2)
+
+        self._wizard_fallback = QLabel("")
+        self._wizard_fallback.setWordWrap(True)
+        report_layout.addWidget(self._wizard_fallback)
+
+        report_layout.addWidget(QLabel("Next steps:"))
+        queue_row = QHBoxLayout()
+        queue_row.addWidget(QLabel("State:"))
+        self._queue_state = QComboBox()
+        for key in ("open", "all", "in-progress", "resolved", "dismissed"):
+            self._queue_state.addItem(key, key)
+        self._queue_state.currentTextChanged.connect(lambda _: self._refresh_queue())
+        queue_row.addWidget(self._queue_state)
+        change_button = QPushButton("Change state of selected…")
+        change_button.clicked.connect(self._change_task_state)
+        queue_row.addWidget(change_button)
+        queue_row.addStretch(1)
+        report_layout.addLayout(queue_row)
+        self._queue_table = _table(("Priority", "State", "Kind", "Subject", "Signals"))
+        self._queue_table.itemSelectionChanged.connect(
+            lambda: self._show_selected_json(
+                "Overview", self._queue_table, self._queue_items
+            )
+        )
+        self._queue_table.setMaximumHeight(160)
+        report_layout.addWidget(self._queue_table)
+
+        self._overview_tech = QCheckBox("Technical details")
+        self._overview_tech.toggled.connect(self._toggle_overview_tech)
+        report_layout.addWidget(self._overview_tech)
         self._overview_table = _table(("Metric", "Value"))
-        layout.addWidget(self._overview_table)
-        layout.addWidget(QLabel("Report JSON (bounded preview of report/v1):"))
+        self._overview_table.hide()
+        report_layout.addWidget(self._overview_table)
+        self._overview_json_label = QLabel("Report JSON (bounded preview of report/v1):")
+        self._overview_json_label.hide()
+        report_layout.addWidget(self._overview_json_label)
         self._overview_json = QPlainTextEdit()
         self._overview_json.setReadOnly(True)
-        layout.addWidget(self._overview_json, 1)
-        return self._page_scaffold("Overview", body)
+        self._overview_json.setMaximumHeight(160)
+        self._overview_json.hide()
+        report_layout.addWidget(self._overview_json)
+        self._overview_stack.addWidget(report)
+        return self._overview_stack
+
+    def _refresh_start_panel(self) -> None:
+        self._start_recent.clear()
+        for entry in self._settings.recent_captures:
+            path = Path(entry)
+            if path.is_file():
+                self._start_recent.addItem(str(path))
+        tshark = self._tshark_path()
+        if tshark is not None:
+            parsed = _tshark_version(tshark)
+            if tshark_too_old(parsed) and parsed is not None:
+                self._start_tshark_status.setText(self._tshark_too_old_text(parsed))
+            else:
+                version = ""
+                if parsed is not None:
+                    version = f" (v{'.'.join(str(part) for part in parsed)})"
+                self._start_tshark_status.setText(
+                    self._t("TShark ready: ") + str(tshark) + version
+                )
+        else:
+            self._start_tshark_status.setText(
+                self._t("TShark was not found — install Wireshark or set the path in Settings.")
+            )
+
+    def _open_recent_capture(self, item) -> None:
+        path = Path(item.text())
+        if path.is_file():
+            self.open_capture_file(path)
 
     def _build_http_page(self) -> QWidget:
         body = QWidget()
@@ -208,6 +415,12 @@ class MainWindow(QMainWindow):
         apply_button = QPushButton("Apply")
         apply_button.clicked.connect(self._apply_uri_filter)
         filter_row.addWidget(apply_button)
+        view_request = QPushButton("View request body")
+        view_request.clicked.connect(lambda: self._view_http_body("request"))
+        filter_row.addWidget(view_request)
+        view_response = QPushButton("View response body")
+        view_response.clicked.connect(lambda: self._view_http_body("response"))
+        filter_row.addWidget(view_response)
         layout.addLayout(filter_row)
         self._http_table = _table(
             ("Frame", "Method", "Host", "URI", "Status", "Code")
@@ -248,6 +461,9 @@ class MainWindow(QMainWindow):
         next_.clicked.connect(lambda: self._page_step("Streams", 1))
         nav.addWidget(prev)
         nav.addWidget(next_)
+        view_button = QPushButton("View content")
+        view_button.clicked.connect(self._view_selected_stream)
+        nav.addWidget(view_button)
         nav.addStretch(1)
         layout.addLayout(nav)
         self._streams_detail = self._detail_pane("Streams")
@@ -273,6 +489,9 @@ class MainWindow(QMainWindow):
         next_.clicked.connect(lambda: self._page_step("Telnet", 1))
         nav.addWidget(prev)
         nav.addWidget(next_)
+        view_button = QPushButton("View content")
+        view_button.clicked.connect(self._view_selected_telnet)
+        nav.addWidget(view_button)
         nav.addStretch(1)
         layout.addLayout(nav)
         self._telnet_detail = self._detail_pane("Telnet")
@@ -282,24 +501,27 @@ class MainWindow(QMainWindow):
     def _build_findings_page(self) -> QWidget:
         body = QWidget()
         layout = QVBoxLayout(body)
-        layout.addWidget(QLabel("Candidates:"))
-        self._candidates_table = _table(
-            ("Rank", "Kind", "Value", "Confidence")
-        )
-        self._candidates_table.itemSelectionChanged.connect(
+        layout.addWidget(QLabel("Flag candidates (double-click to copy):"))
+        self._candidates_table = _table(("Flag", "Exam point", "Evidence", "Confidence"))
+        self._candidates_table.itemSelectionChanged.connect(self._show_findings_detail)
+        self._candidates_table.itemDoubleClicked.connect(self._copy_findings_flag)
+        layout.addWidget(self._candidates_table, 2)
+        layout.addWidget(QLabel("Exam points:"))
+        self._findings_table = _table(("Exam point", "What to look at", "Next action"))
+        self._findings_table.itemSelectionChanged.connect(self._show_findings_detail)
+        layout.addWidget(self._findings_table, 2)
+        layout.addWidget(QLabel("Operation log:"))
+        self._timeline_kind = QLineEdit()
+        self._timeline_kind.hide()
+        self._timeline_duplicates = QCheckBox("Include duplicates")
+        self._timeline_duplicates.hide()
+        self._timeline_table = _table(("Frame start", "What happened", "Target", "Status"))
+        self._timeline_table.itemSelectionChanged.connect(
             lambda: self._show_selected_json(
-                "Findings", self._candidates_table, self._candidate_items
+                "Findings", self._timeline_table, self._timeline_items
             )
         )
-        layout.addWidget(self._candidates_table, 1)
-        layout.addWidget(QLabel("Findings:"))
-        self._findings_table = _table(("Kind", "Subject kind", "Subject", "Status"))
-        self._findings_table.itemSelectionChanged.connect(
-            lambda: self._show_selected_json(
-                "Findings", self._findings_table, self._finding_items
-            )
-        )
-        layout.addWidget(self._findings_table, 1)
+        layout.addWidget(self._timeline_table, 2)
         nav = QHBoxLayout()
         prev = QPushButton("Previous candidates")
         prev.clicked.connect(lambda: self._findings_step(-1))
@@ -309,115 +531,13 @@ class MainWindow(QMainWindow):
         nav.addWidget(next_)
         nav.addStretch(1)
         layout.addLayout(nav)
+        self._findings_tech = QCheckBox("Technical details")
+        self._findings_tech.toggled.connect(self._toggle_findings_tech)
+        layout.addWidget(self._findings_tech)
         self._findings_detail = self._detail_pane("Findings")
+        self._findings_detail.hide()
         layout.addWidget(self._findings_detail, 1)
         return self._page_scaffold("Findings", body)
-
-    def _build_timeline_page(self) -> QWidget:
-        body = QWidget()
-        layout = QVBoxLayout(body)
-        filter_row = QHBoxLayout()
-        filter_row.addWidget(QLabel("Event kind:"))
-        self._timeline_kind = QLineEdit()
-        self._timeline_kind.setPlaceholderText("optional, e.g. file-write")
-        filter_row.addWidget(self._timeline_kind, 1)
-        self._timeline_duplicates = QCheckBox("Include duplicates")
-        filter_row.addWidget(self._timeline_duplicates)
-        apply_button = QPushButton("Apply")
-        apply_button.clicked.connect(self._refresh_page("Timeline"))
-        filter_row.addWidget(apply_button)
-        layout.addLayout(filter_row)
-        self._timeline_table = _table(
-            ("Frame start", "Kind", "Target", "Status", "Group")
-        )
-        self._timeline_table.itemSelectionChanged.connect(
-            lambda: self._show_selected_json(
-                "Timeline", self._timeline_table, self._timeline_items
-            )
-        )
-        layout.addWidget(self._timeline_table, 1)
-        nav = QHBoxLayout()
-        prev = QPushButton("Previous")
-        prev.clicked.connect(lambda: self._page_step("Timeline", -1))
-        next_ = QPushButton("Next")
-        next_.clicked.connect(lambda: self._page_step("Timeline", 1))
-        nav.addWidget(prev)
-        nav.addWidget(next_)
-        nav.addStretch(1)
-        layout.addLayout(nav)
-        self._timeline_detail = self._detail_pane("Timeline")
-        layout.addWidget(self._timeline_detail, 1)
-        return self._page_scaffold("Timeline", body)
-
-    def _build_queue_page(self) -> QWidget:
-        body = QWidget()
-        layout = QVBoxLayout(body)
-        filter_row = QHBoxLayout()
-        filter_row.addWidget(QLabel("State:"))
-        self._queue_state = QComboBox()
-        self._queue_state.addItem("all")
-        self._queue_state.addItems(TASK_STATES)
-        self._queue_state.currentTextChanged.connect(lambda _: self._refresh_page("Manual queue")())
-        filter_row.addWidget(self._queue_state)
-        filter_row.addStretch(1)
-        change_button = QPushButton("Change state of selected…")
-        change_button.clicked.connect(self._change_task_state)
-        filter_row.addWidget(change_button)
-        layout.addLayout(filter_row)
-        self._queue_table = _table(
-            ("Priority", "State", "Kind", "Subject", "Signals")
-        )
-        self._queue_table.itemSelectionChanged.connect(
-            lambda: self._show_selected_json(
-                "Manual queue", self._queue_table, self._queue_items
-            )
-        )
-        layout.addWidget(self._queue_table, 1)
-        nav = QHBoxLayout()
-        prev = QPushButton("Previous")
-        prev.clicked.connect(lambda: self._page_step("Manual queue", -1))
-        next_ = QPushButton("Next")
-        next_.clicked.connect(lambda: self._page_step("Manual queue", 1))
-        nav.addWidget(prev)
-        nav.addWidget(next_)
-        nav.addStretch(1)
-        layout.addLayout(nav)
-        self._queue_detail = self._detail_pane("Manual queue")
-        layout.addWidget(self._queue_detail, 1)
-        return self._page_scaffold("Manual queue", body)
-
-    def _build_notes_page(self) -> QWidget:
-        body = QWidget()
-        layout = QVBoxLayout(body)
-        layout.addWidget(QLabel("Add note / review mark:"))
-        form = QFormLayout()
-        self._note_kind = QComboBox()
-        self._note_kind.addItems(SUBJECT_KINDS)
-        form.addRow("Subject kind", self._note_kind)
-        self._note_subject = QLineEdit()
-        form.addRow("Subject ID", self._note_subject)
-        self._note_body = QPlainTextEdit()
-        self._note_body.setMaximumHeight(96)
-        form.addRow("Note body", self._note_body)
-        self._mark_state = QComboBox()
-        self._mark_state.addItems(REVIEW_STATES)
-        form.addRow("Review mark", self._mark_state)
-        layout.addLayout(form)
-        buttons = QHBoxLayout()
-        add_note = QPushButton("Add note")
-        add_note.clicked.connect(self._add_note)
-        buttons.addWidget(add_note)
-        set_mark = QPushButton("Apply review mark")
-        set_mark.clicked.connect(self._apply_review_mark)
-        buttons.addWidget(set_mark)
-        update_note = QPushButton("Update selected note body")
-        update_note.clicked.connect(self._update_selected_note)
-        buttons.addWidget(update_note)
-        buttons.addStretch(1)
-        layout.addLayout(buttons)
-        self._notes_table = _table(("Note ID", "Subject kind", "Subject ID", "Body"))
-        layout.addWidget(self._notes_table, 1)
-        return self._page_scaffold("Notes", body)
 
     def _build_export_page(self) -> QWidget:
         body = QWidget()
@@ -434,15 +554,289 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._export_result, 1)
         return self._page_scaffold("Export", body)
 
+    # --------------------------------------------------------- wizard/files
+
+    def _populate_wizard(self) -> None:
+        if self.services is None:
+            return
+        try:
+            wizard = self.services.wizard()
+        except (OSError, ValueError, KeyError) as error:
+            self._wizard_hierarchy.setText(self._t("error: ") + str(error))
+            return
+        if not self._flag_format_edit.text().strip():
+            self._flag_format_edit.setText(wizard.get("flag_format") or "")
+        hierarchy = wizard.get("protocol_hierarchy") or []
+        self._wizard_hierarchy.setText(
+            self._t("Protocol hierarchy: ")
+            + "  ".join(f"{item['label']} {item['share']}%" for item in hierarchy[:6])
+        )
+        suggestions = list(wizard.get("suggestions") or [])
+        self._suggestion_actions = [item.get("action") for item in suggestions]
+        self._suggestions_table.setVisible(bool(suggestions))
+        self._fill_table(
+            self._suggestions_table,
+            [
+                (item.get("title"), item.get("evidence"), item.get("detail"))
+                for item in suggestions
+            ],
+        )
+        candidates = list(wizard.get("flag_candidates") or [])
+        self._fill_table(
+            self._wizard_candidates,
+            [
+                (
+                    ("* " if item.get("user_format_match") else "") + str(item.get("value")),
+                    item.get("kind"),
+                    item.get("rank_score"),
+                )
+                for item in candidates
+            ],
+        )
+        if suggestions:
+            self._wizard_fallback.setText("")
+        else:
+            steps = [
+                f"{step.get('title')}: {step.get('detail')}"
+                for step in wizard.get("fallback_steps") or []
+            ]
+            self._wizard_fallback.setText(
+                self._t("No challenge type recognized yet. Standard checklist:") + "\n"
+                + "\n".join(steps)
+            )
+
+    def _run_grep(self) -> None:
+        if self.services is None:
+            return
+        needle = self._grep_edit.text().strip()
+        if not needle:
+            return
+        try:
+            result = self.services.grep(needle)
+        except (OSError, ValueError) as error:
+            QMessageBox.warning(self, self._t("Auto-Shark"), self._t("error: ") + str(error))
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle(self._t("Search results"))
+        dialog.resize(860, 480)
+        layout = QVBoxLayout(dialog)
+        summary = QLabel(
+            self._t("matches")
+            + f": {len(result.get('matches') or [])} · "
+            + self._t("blobs scanned")
+            + f": {result.get('blobs_scanned')}/{result.get('blobs_total')}"
+        )
+        layout.addWidget(summary)
+        table = _table(("Variant", "Source", "Frames", "Offset", "Context"))
+        matches = list(result.get("matches") or [])
+        self._fill_table(
+            table,
+            [
+                (
+                    match.get("variant"),
+                    match.get("source_kind"),
+                    f"{match.get('frame_start')}-{match.get('frame_end')}",
+                    match.get("offset"),
+                    match.get("context"),
+                )
+                for match in matches
+            ],
+        )
+        layout.addWidget(table, 1)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(dialog.reject)
+        buttons.addButton(QDialogButtonBox.StandardButton.Close).clicked.connect(dialog.accept)
+        layout.addWidget(buttons)
+        dialog.exec()
+
+    def _rescan_flag_format(self) -> None:
+        if self.services is None:
+            return
+        pattern = self._flag_format_edit.text().strip()
+        from ..search import compile_flag_pattern
+
+        try:
+            compile_flag_pattern(pattern or None)
+        except ValueError as error:
+            QMessageBox.warning(self, self._t("Auto-Shark"), self._t("error: ") + str(error))
+            return
+        try:
+            self.services.set_flag_format(pattern)
+        except (OSError, ValueError) as error:
+            QMessageBox.warning(self, self._t("Auto-Shark"), self._t("error: ") + str(error))
+            return
+        self._start_stage_worker(self.services.rescan_stages())
+
+    def _open_suggestion(self, item) -> None:
+        row = item.row()
+        actions = getattr(self, "_suggestion_actions", [])
+        if 0 <= row < len(actions):
+            self._jump_action(actions[row])
+
+    def _jump_action(self, action: str) -> None:
+        mapping = {
+            "files": "Files",
+            "http": "HTTP",
+            "streams": "Streams",
+            "telnet": "Telnet",
+            "findings": "Findings",
+            "timeline": "Findings",
+        }
+        page = mapping.get(str(action))
+        if page is None:
+            return
+        self._select_page(page)
+
+    def _copy_candidate(self, item) -> None:
+        value = item.text().lstrip("* ").strip()
+        from PySide6.QtWidgets import QApplication
+
+        QApplication.clipboard().setText(value)
+        self.statusBar().showMessage(self._t("Copied: ") + value, 5000)
+
+    def _build_files_page(self) -> QWidget:
+        body = QWidget()
+        layout = QVBoxLayout(body)
+        buttons = QHBoxLayout()
+        open_button = QPushButton("Open in Explorer")
+        open_button.clicked.connect(self._open_selected_artifact)
+        buttons.addWidget(open_button)
+        view_button = QPushButton("View content")
+        view_button.clicked.connect(self._view_selected_artifact)
+        buttons.addWidget(view_button)
+        buttons.addStretch(1)
+        layout.addLayout(buttons)
+        self._files_table = _table(("Name", "Media type", "Magic", "Bytes", "SHA-256"))
+        layout.addWidget(self._files_table, 1)
+        return self._page_scaffold("Files", body)
+
+    def _selected_artifact(self):
+        row = self._files_table.currentRow()
+        items = getattr(self, "_files_items", [])
+        if 0 <= row < len(items):
+            return items[row]
+        return None
+
+    def _open_selected_artifact(self) -> None:
+        artifact = self._selected_artifact()
+        if artifact is None:
+            QMessageBox.information(self, self._t("Auto-Shark"), self._t("Select a file first."))
+            return
+        path = self.services.root / str(artifact.get("relative_path"))
+        if not path.is_file():
+            QMessageBox.warning(self, self._t("Auto-Shark"), self._t("error: file missing"))
+            return
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+
+    def _view_selected_artifact(self) -> None:
+        artifact = self._selected_artifact()
+        if artifact is None or self.services is None:
+            return
+        path = self.services.blob_path(str(artifact.get("sha256")))
+        if path is None or not path.is_file():
+            QMessageBox.warning(self, self._t("Auto-Shark"), self._t("error: file missing"))
+            return
+        from .hexview import read_bounded, view_bytes
+
+        view_bytes(
+            self,
+            str(artifact.get("name")),
+            read_bounded(path),
+            f"{artifact.get('byte_length')} bytes · {artifact.get('magic') or ''}",
+        )
+
     # ------------------------------------------------------------ navigation
 
     def _nav_changed(self, row: int) -> None:
-        if 0 <= row < len(PAGE_NAMES):
-            self._stack.setCurrentIndex(row)
-            self._refresh_page(PAGE_NAMES[row])()
+        item = self._nav.item(row)
+        if item is None:
+            return
+        name = item.data(Qt.ItemDataRole.UserRole)
+        widget = self._pages.get(str(name))
+        if widget is None:
+            return
+        self._stack.setCurrentWidget(widget)
+        self._refresh_page(str(name))()
 
     def current_page_name(self) -> str:
-        return PAGE_NAMES[self._nav.currentRow()]
+        item = self._nav.currentItem()
+        if item is None:
+            return "Overview"
+        name = item.data(Qt.ItemDataRole.UserRole)
+        return str(name) if name else "Overview"
+
+    def _rebuild_nav(self, extra: tuple[str, ...] = ()) -> None:
+        current = self.current_page_name() if self._nav.count() else "Overview"
+        names = list(CORE_PAGES)
+        for name in extra:
+            if name not in names:
+                names.append(name)
+        self._nav.blockSignals(True)
+        self._nav.clear()
+        selected = 0
+        for index, name in enumerate(names):
+            item = QListWidgetItem(self._t(name))
+            item.setData(Qt.ItemDataRole.UserRole, name)
+            self._nav.addItem(item)
+            if name == current:
+                selected = index
+        self._nav.setCurrentRow(selected)
+        self._nav.blockSignals(False)
+
+    def _select_page(self, name: str) -> None:
+        if name in OPTIONAL_PAGES:
+            found = False
+            for row in range(self._nav.count()):
+                item = self._nav.item(row)
+                if item is not None and item.data(Qt.ItemDataRole.UserRole) == name:
+                    found = True
+                    break
+            if not found:
+                extra = []
+                for row in range(self._nav.count()):
+                    item = self._nav.item(row)
+                    stored = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
+                    if stored in OPTIONAL_PAGES:
+                        extra.append(str(stored))
+                if name not in extra:
+                    extra.append(name)
+                self._rebuild_nav(tuple(extra))
+        for row in range(self._nav.count()):
+            item = self._nav.item(row)
+            if item is not None and item.data(Qt.ItemDataRole.UserRole) == name:
+                self._nav.setCurrentRow(row)
+                return
+        widget = self._pages.get(name)
+        if widget is not None:
+            self._stack.setCurrentWidget(widget)
+            self._refresh_page(name)()
+
+    def _sync_optional_nav(self) -> None:
+        extra: list[str] = []
+        if self.services is not None:
+            try:
+                payload = self.services.telnet_dialogues(offset=0)
+                if int(payload.get("total") or 0) > 0:
+                    extra.append("Telnet")
+            except (OSError, ValueError, KeyError):
+                extra = []
+        self._rebuild_nav(tuple(extra))
+
+    def _show_help(self) -> None:
+        QMessageBox.information(
+            self, self._t("How to use Auto-Shark"), self._t(HELP_BODY)
+        )
+
+    def _toggle_overview_tech(self, checked: bool) -> None:
+        self._overview_table.setVisible(checked)
+        self._overview_json_label.setVisible(checked)
+        self._overview_json.setVisible(checked)
+
+    def _toggle_findings_tech(self, checked: bool) -> None:
+        self._findings_detail.setVisible(checked)
 
     def refresh_current_page(self) -> None:
         self._refresh_page(self.current_page_name())()
@@ -488,7 +882,9 @@ class MainWindow(QMainWindow):
             )
             return
         self.services = services
-        self._offsets = {name: 0 for name in PAGE_NAMES}
+        self._offsets = {name: 0 for name in STACK_PAGES + ("Timeline", "Manual queue")}
+        self._sync_optional_nav()
+        self._nav.setCurrentRow(0)
         self.statusBar().showMessage(
             f"{info.root} | capture {info.capture_sha256[:16]}… | "
             f"{info.capture_bytes} bytes | schema {info.database_schema}"
@@ -503,11 +899,37 @@ class MainWindow(QMainWindow):
     def _default_project_root(self, capture: Path) -> Path:
         return Settings.from_environment().project_root / f"{capture.stem}.auto-shark"
 
+    def _project_needs_analysis(self) -> bool:
+        """True when the open project has no indexed HTTP facts yet."""
+
+        if self.services is None:
+            return False
+        try:
+            payload = self.services.transactions(offset=0)
+        except (OSError, ValueError, KeyError):
+            return True
+        return int(payload.get("total", 0)) == 0
+
     def _tshark_path(self) -> Optional[Path]:
         configured = self._settings.tshark_path
         if configured and Path(configured).is_file():
             return Path(configured)
         return resolve_tshark(None)
+
+    def _tshark_too_old_text(self, version: tuple[int, int, int]) -> str:
+        found = ".".join(str(part) for part in version)
+        return self._t(TSHARK_TOO_OLD_TEMPLATE).format(found=found)
+
+    def _tshark_block_reason(self, executable: Optional[Path]) -> Optional[str]:
+        if executable is None:
+            return self._t(
+                "TShark was not found.\n"
+                "Install Wireshark, then set the path in Edit > Settings…"
+            )
+        parsed = _tshark_version(executable)
+        if tshark_too_old(parsed) and parsed is not None:
+            return self._tshark_too_old_text(parsed)
+        return None
 
     def _report_synced_path_error(self, error: Exception) -> None:
         QMessageBox.warning(
@@ -523,9 +945,16 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getOpenFileName(
             self, self._t("Open capture"), "", "Captures (*.pcap *.pcapng);;All files (*)"
         )
-        if not path:
-            return
-        capture = Path(path)
+        if path:
+            self.open_capture_file(Path(path))
+
+    def open_capture_file(self, capture: Path) -> None:
+        """Open (and if needed, fully analyze) one capture in one interaction.
+
+        The project directory is an implementation detail: it is created in
+        the default machine-local root, and analysis starts automatically
+        unless this project was already analyzed.
+        """
         project_dir = self._default_project_root(capture)
         created = not (project_dir / "project.json").is_file()
         try:
@@ -539,59 +968,126 @@ class MainWindow(QMainWindow):
                     self, self._t("Auto-Shark"), self._t("Cannot create project: ") + str(error)
                 )
             return
+        self._settings.remember_capture(capture)
+        with suppress(OSError):
+            save_settings(self._settings)
         self.open_project(project_dir)
         tshark = self._tshark_path()
-        if tshark is None:
-            QMessageBox.warning(
-                self,
-                self._t("Auto-Shark"),
-                self._t(
-                    "TShark was not found.\n"
-                    "Install Wireshark, then set the path in Edit > Settings…"
-                ),
-            )
+        blocked = self._tshark_block_reason(tshark)
+        if blocked:
+            QMessageBox.warning(self, self._t("Auto-Shark"), blocked)
             return
-        self.run_analysis(capture=capture if created else None, tshark=tshark)
+        if created or self._project_needs_analysis():
+            keylog = find_tls_keylog(capture)
+            if keylog is not None:
+                self.statusBar().showMessage(
+                    self._t("Auto-detected TLS keylog: ") + keylog.path.name, 10_000
+                )
+            self.run_analysis(tls_keylog=keylog)
 
     def _settings_dialog(self) -> None:
         dialog = QDialog(self)
         dialog.setWindowTitle(self._t("Auto-Shark settings"))
-        form = QFormLayout(dialog)
+        dialog.resize(680, 560)
+        root = QVBoxLayout(dialog)
 
+        intro = QLabel(
+            self._t(
+                "Local CTF analysis only needs TShark (it comes with Wireshark 4). "
+                "The remote Linux node is an optional extra for image/stego tools; "
+                "ordinary traffic challenges do not use it."
+            )
+        )
+        intro.setWordWrap(True)
+        intro.setObjectName("settingsIntro")
+        root.addWidget(intro)
+
+        form_host = QWidget()
+        form = QFormLayout(form_host)
+        form.setContentsMargins(0, 0, 0, 0)
         self._settings_tshark = QLineEdit(self._settings.tshark_path or "")
         tshark_row = QHBoxLayout()
         tshark_row.addWidget(self._settings_tshark, 1)
-        browse = QPushButton("Browse…")
-        probe = QPushButton("Probe")
+        browse = QPushButton(self._t("Browse…"))
+        probe = QPushButton(self._t("Check"))
         tshark_row.addWidget(browse)
         tshark_row.addWidget(probe)
         tshark_widget = QWidget()
         tshark_widget.setLayout(tshark_row)
-        form.addRow("TShark executable", tshark_widget)
-
-        self._settings_remote_host = QLineEdit(self._settings.remote_host or "")
-        form.addRow("Remote host (optional)", self._settings_remote_host)
-        self._settings_ssh = QLineEdit(self._settings.ssh_path or "")
-        self._settings_sftp = QLineEdit(self._settings.sftp_path or "")
-        self._settings_remote_root = QLineEdit(self._settings.remote_root)
-        self._settings_remote_paths = QLineEdit("/usr/bin/python3")
-        form.addRow("ssh executable", self._settings_ssh)
-        form.addRow("sftp executable", self._settings_sftp)
-        form.addRow("Remote working root", self._settings_remote_root)
-        form.addRow("Remote paths to probe", self._settings_remote_paths)
-        remote_probe = QPushButton("Probe remote node")
-        form.addRow("", remote_probe)
-
+        form.addRow(self._t("TShark executable"), tshark_widget)
         self._settings_output = QPlainTextEdit()
         self._settings_output.setReadOnly(True)
         self._settings_output.setMaximumHeight(140)
-        form.addRow("Probe result", self._settings_output)
+        self._settings_output.setPlaceholderText(
+            self._t("Click Check after choosing tshark.exe. Need Wireshark 4.0 or newer.")
+        )
+        form.addRow(self._t("Check result"), self._settings_output)
+        root.addWidget(form_host)
+
+        advanced_toggle = QCheckBox(self._t("Show advanced: remote Linux node (optional)"))
+        advanced_toggle.setObjectName("settingsAdvancedToggle")
+        root.addWidget(advanced_toggle)
+        advanced = QWidget()
+        advanced.setObjectName("settingsAdvanced")
+        advanced_form = QFormLayout(advanced)
+        advanced_form.setContentsMargins(0, 0, 0, 0)
+        advanced_help = QLabel(
+            self._t(
+                "Optional Linux helper for extra tools (zsteg, binwalk, …). "
+                "Local traffic challenges do not need this. Protocol is SSH + SFTP only. "
+                "Host is user@IP or user@domain, for example ctf@192.168.1.10. "
+                "Port defaults to 22. Passwords are not supported — use an OpenSSH "
+                "private key or ssh-agent. Probe tests the connection; saving only "
+                "stores the settings. Main analysis still runs locally with TShark."
+            )
+        )
+        advanced_help.setWordWrap(True)
+        advanced_form.addRow(advanced_help)
+        self._settings_remote_host = QLineEdit(self._settings.remote_host or "")
+        self._settings_remote_host.setObjectName("settingsRemoteHost")
+        self._settings_remote_host.setPlaceholderText("ctf@192.168.1.10")
+        advanced_form.addRow(self._t("SSH user@host"), self._settings_remote_host)
+        self._settings_remote_port = QSpinBox()
+        self._settings_remote_port.setObjectName("settingsRemotePort")
+        self._settings_remote_port.setRange(1, 65535)
+        self._settings_remote_port.setValue(int(self._settings.remote_port or 22))
+        advanced_form.addRow(self._t("SSH port"), self._settings_remote_port)
+        identity_row = QHBoxLayout()
+        self._settings_identity = QLineEdit(self._settings.ssh_identity or "")
+        self._settings_identity.setObjectName("settingsSshIdentity")
+        self._settings_identity.setPlaceholderText(
+            self._t("Optional private key; empty uses ssh-agent / default keys")
+        )
+        identity_browse = QPushButton(self._t("Browse…"))
+        identity_row.addWidget(self._settings_identity, 1)
+        identity_row.addWidget(identity_browse)
+        identity_widget = QWidget()
+        identity_widget.setLayout(identity_row)
+        advanced_form.addRow(self._t("SSH private key"), identity_widget)
+        self._settings_ssh = QLineEdit(self._settings.ssh_path or "")
+        self._settings_sftp = QLineEdit(self._settings.sftp_path or "")
+        self._settings_ssh.setPlaceholderText(self._t("Leave empty to auto-detect OpenSSH"))
+        self._settings_sftp.setPlaceholderText(self._t("Leave empty to auto-detect OpenSSH"))
+        self._settings_remote_root = QLineEdit(self._settings.remote_root)
+        self._settings_remote_paths = QLineEdit(DEFAULT_REMOTE_PROBE_PATHS)
+        advanced_form.addRow(self._t("ssh executable"), self._settings_ssh)
+        advanced_form.addRow(self._t("sftp executable"), self._settings_sftp)
+        advanced_form.addRow(self._t("Remote working root"), self._settings_remote_root)
+        advanced_form.addRow(self._t("Remote paths to probe"), self._settings_remote_paths)
+        remote_probe = QPushButton(self._t("Probe remote node"))
+        advanced_form.addRow("", remote_probe)
+        show_advanced = bool(self._settings.remote_host)
+        advanced.setVisible(show_advanced)
+        advanced_toggle.setChecked(show_advanced)
+        advanced_toggle.toggled.connect(advanced.setVisible)
+        root.addWidget(advanced)
+
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
         )
         buttons.accepted.connect(dialog.accept)
         buttons.rejected.connect(dialog.reject)
-        form.addRow(buttons)
+        root.addWidget(buttons)
 
         def pick_tshark() -> None:
             path, _ = QFileDialog.getOpenFileName(dialog, self._t("Choose tshark executable"))
@@ -605,16 +1101,28 @@ class MainWindow(QMainWindow):
             if not text:
                 self._settings_output.setPlainText(self._t("Enter a TShark path first."))
                 return
+            path = Path(text)
+            parsed = _tshark_version(path) if path.is_file() else None
             try:
-                result = probe_tshark(Path(text))
+                result = probe_tshark(path)
             except (OSError, ValueError) as error:
-                self._settings_output.setPlainText(self._t("error: ") + str(error))
+                message = self._t("error: ") + str(error)
+                if tshark_too_old(parsed) and parsed is not None:
+                    message = self._tshark_too_old_text(parsed) + "\n" + message
+                self._settings_output.setPlainText(message)
                 return
             features = sum(1 for value in result.features.values() if value)
-            self._settings_output.setPlainText(
-                f"{result.version_line}\nusable: {'yes' if result.usable else 'no'} | "
-                f"capabilities: {features}/{len(result.features)}"
-            )
+            usable = self._t("Usable: yes") if result.usable else self._t("Usable: no")
+            lines = [
+                result.version_line,
+                usable,
+                f"{self._t('Capabilities:')} {features}/{len(result.features)}",
+            ]
+            if tshark_too_old(parsed) and parsed is not None:
+                lines.insert(1, self._tshark_too_old_text(parsed))
+            elif result.errors:
+                lines.append(self._t("error: ") + "; ".join(result.errors[:3]))
+            self._settings_output.setPlainText("\n".join(lines))
 
         def run_remote_probe() -> None:
             from ..remote import RemoteNodeConfig, find_ssh_tools, probe_remote_node
@@ -639,6 +1147,7 @@ class MainWindow(QMainWindow):
                 for item in self._settings_remote_paths.text().split(",")
                 if item.strip()
             ]
+            identity_text = self._settings_identity.text().strip()
             try:
                 probe = probe_remote_node(
                     RemoteNodeConfig(
@@ -647,6 +1156,8 @@ class MainWindow(QMainWindow):
                         sftp_executable=sftp,
                         remote_root=self._settings_remote_root.text().strip()
                         or ".auto-shark-jobs",
+                        port=int(self._settings_remote_port.value()),
+                        identity_file=Path(identity_text) if identity_text else None,
                     ),
                     paths,
                 )
@@ -657,17 +1168,27 @@ class MainWindow(QMainWindow):
                 json.dumps(probe, ensure_ascii=False, sort_keys=True, indent=2)
             )
 
+        def pick_identity() -> None:
+            path, _ = QFileDialog.getOpenFileName(dialog, self._t("Choose SSH private key"))
+            if path:
+                self._settings_identity.setText(path)
+
         browse.clicked.connect(pick_tshark)
         probe.clicked.connect(run_probe)
+        identity_browse.clicked.connect(pick_identity)
         remote_probe.clicked.connect(run_remote_probe)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         self._settings = GuiSettings(
             tshark_path=self._settings_tshark.text().strip() or None,
             remote_host=self._settings_remote_host.text().strip() or None,
+            remote_port=int(self._settings_remote_port.value()),
+            ssh_identity=self._settings_identity.text().strip() or None,
             ssh_path=self._settings_ssh.text().strip() or None,
             sftp_path=self._settings_sftp.text().strip() or None,
             remote_root=self._settings_remote_root.text().strip() or ".auto-shark-jobs",
+            recent_captures=self._settings.recent_captures,
+            flag_format=self._settings.flag_format,
         )
         try:
             save_settings(self._settings)
@@ -675,6 +1196,11 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(
                 self, self._t("Auto-Shark"), self._t("Cannot save settings: ") + str(error)
             )
+            return
+        blocked = self._tshark_block_reason(self._tshark_path())
+        if blocked and self._tshark_path() is not None:
+            QMessageBox.warning(self, self._t("Auto-Shark"), blocked)
+        self._refresh_start_panel()
 
     def _new_project_dialog(self) -> None:
         dialog = QDialog(self)
@@ -691,6 +1217,9 @@ class MainWindow(QMainWindow):
         tls_key_edit = QLineEdit()
         tls_key_edit.setObjectName("tlsRsaKeyPath")
         tls_key_button = QPushButton(self._t("Browse…"))
+        tls_keylog_edit = QLineEdit()
+        tls_keylog_edit.setObjectName("tlsKeylogPath")
+        tls_keylog_button = QPushButton(self._t("Browse…"))
         resolved = resolve_tshark(None)
         if resolved is not None:
             tshark_edit.setText(str(resolved))
@@ -709,10 +1238,16 @@ class MainWindow(QMainWindow):
         tls_key_row.addWidget(tls_key_button)
         tls_key_widget = QWidget()
         tls_key_widget.setLayout(tls_key_row)
+        tls_keylog_row = QHBoxLayout()
+        tls_keylog_row.addWidget(tls_keylog_edit, 1)
+        tls_keylog_row.addWidget(tls_keylog_button)
+        tls_keylog_widget = QWidget()
+        tls_keylog_widget.setLayout(tls_keylog_row)
         form.addRow(self._t("Capture file"), capture_widget)
         form.addRow(self._t("Project directory"), project_widget)
         form.addRow(self._t("TShark executable"), tshark_edit)
         form.addRow(self._t("Legacy TLS RSA private key (optional)"), tls_key_widget)
+        form.addRow(self._t("TLS keylog file (optional)"), tls_keylog_widget)
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
@@ -734,6 +1269,16 @@ class MainWindow(QMainWindow):
             if path:
                 project_edit.setText(path)
 
+        def pick_tls_keylog() -> None:
+            path, _ = QFileDialog.getOpenFileName(
+                dialog,
+                self._t("Choose TLS keylog file"),
+                "",
+                "Keylog files (*.log *.txt);;All files (*)",
+            )
+            if path:
+                tls_keylog_edit.setText(path)
+
         def pick_tls_key() -> None:
             path, _ = QFileDialog.getOpenFileName(
                 dialog,
@@ -747,18 +1292,31 @@ class MainWindow(QMainWindow):
         capture_button.clicked.connect(pick_capture)
         project_button.clicked.connect(pick_project)
         tls_key_button.clicked.connect(pick_tls_key)
+        tls_keylog_button.clicked.connect(pick_tls_keylog)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         capture_text = capture_edit.text().strip()
         project_text = project_edit.text().strip()
         tshark_text = tshark_edit.text().strip()
         tls_key_text = tls_key_edit.text().strip()
+        tls_keylog_text = tls_keylog_edit.text().strip()
         if not capture_text or not project_text:
             QMessageBox.warning(
                 self, self._t("Auto-Shark"), self._t("Capture and project paths are required.")
             )
             return
         tls_rsa_key = None
+        tls_keylog = None
+        if tls_keylog_text:
+            try:
+                tls_keylog = load_tls_keylog(Path(tls_keylog_text))
+            except (OSError, ValueError) as error:
+                QMessageBox.critical(
+                    self,
+                    self._t("Auto-Shark"),
+                    self._t("Cannot load TLS keylog file: ") + str(error),
+                )
+                return
         if tls_key_text:
             try:
                 tls_rsa_key = load_tls_rsa_key(Path(tls_key_text))
@@ -785,17 +1343,16 @@ class MainWindow(QMainWindow):
             if tshark_text and Path(tshark_text).is_file()
             else self._tshark_path()
         )
-        if tshark is None:
-            QMessageBox.warning(
-                self,
-                self._t("Auto-Shark"),
-                self._t(
-                    "TShark was not found.\n"
-                    "Install Wireshark, then set the path in Edit > Settings…"
-                ),
-            )
+        blocked = self._tshark_block_reason(tshark)
+        if blocked:
+            QMessageBox.warning(self, self._t("Auto-Shark"), blocked)
             return
-        self.run_analysis(capture=Path(capture_text), tshark=tshark, tls_rsa_key=tls_rsa_key)
+        self.run_analysis(
+            capture=Path(capture_text),
+            tshark=tshark,
+            tls_rsa_key=tls_rsa_key,
+            tls_keylog=tls_keylog,
+        )
 
     # ------------------------------------------------------------- analysis
 
@@ -805,22 +1362,22 @@ class MainWindow(QMainWindow):
         capture: Optional[Path] = None,
         tshark: Optional[Path] = None,
         tls_rsa_key: Optional[TlsRsaKey] = None,
+        tls_keylog=None,
     ) -> None:
         if self.services is None:
             QMessageBox.information(self, self._t("Auto-Shark"), self._t("Open a project first."))
             return
         executable = tshark or self._tshark_path()
-        if executable is None:
-            QMessageBox.warning(
-                self,
-                self._t("Auto-Shark"),
-                self._t(
-                    "TShark was not found. Install Wireshark, then use Edit > Settings… "
-                    "to configure the path."
-                ),
-            )
+        blocked = self._tshark_block_reason(executable)
+        if blocked:
+            QMessageBox.warning(self, self._t("Auto-Shark"), blocked)
             return
-        stages = self.services.analysis_stages(executable, capture=capture, tls_rsa_key=tls_rsa_key)
+        stages = self.services.analysis_stages(
+            executable,
+            capture=capture,
+            tls_rsa_key=tls_rsa_key,
+            tls_keylog=tls_keylog,
+        )
         self._start_stage_worker(stages)
 
     def _start_stage_worker(self, stages: list) -> None:
@@ -832,28 +1389,53 @@ class MainWindow(QMainWindow):
         dialog.setMinimumDuration(0)
         worker = StageWorker(stages)
         self._worker = worker
+        failures: list[tuple[str, str]] = []
+        skipped: list[str] = []
 
         def on_started(title: str) -> None:
             dialog.setLabelText(self._t("Running: ") + title)
 
         def on_finished_stage(key: str, summary: str) -> None:
             dialog.setValue(dialog.value() + 1)
+            # Guarded stages report degradation as a status payload instead
+            # of raising; surface those in the end-of-run summary so a
+            # silently skipped analyzer can never look like a clean run.
+            try:
+                payload = json.loads(summary)
+            except (TypeError, ValueError):
+                return
+            status = payload.get("status") if isinstance(payload, dict) else None
+            if status in ("failed", "unavailable"):
+                reason = str(payload.get("reason") or status)
+                skipped.append(f"{key}: {reason[:200]}")
 
         def on_failed(key: str, error: str) -> None:
-            QMessageBox.warning(
-                self,
-                self._t("Auto-Shark"),
-                self._t("Stage '") + key + self._t("' failed:\n") + error,
-            )
+            # Collected and reported once at the end; one dialog per stage
+            # turns a single degraded analyzer into a wall of error boxes.
+            failures.append((key, error))
+            dialog.setValue(dialog.value() + 1)
 
         def on_run_done(completed: bool, message: str) -> None:
             dialog.reset()
             self._worker = None
             self._cancel_action.setEnabled(False)
-            if completed:
-                QMessageBox.information(self, self._t("Auto-Shark"), message)
+            all_issues = [*failures, *skipped]
+            if all_issues:
+                lines = "\n".join(f"- {item}" for item in all_issues)
+                QMessageBox.warning(
+                    self,
+                    self._t("Auto-Shark"),
+                    self._t("Analysis finished; the following stages were skipped:\n")
+                    + lines
+                    + "\n"
+                    + self._t("Skipped stages do not block the remaining results."),
+                )
             else:
-                QMessageBox.warning(self, self._t("Auto-Shark"), message)
+                QMessageBox.information(
+                    self, self._t("Auto-Shark"), self._t("Analysis finished.") + "\n" + message
+                )
+            self._sync_optional_nav()
+            self._nav.setCurrentRow(0)
             self.refresh_current_page()
 
         worker.stage_started.connect(on_started)
@@ -912,61 +1494,6 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------- mutations
 
-    def _add_note(self) -> None:
-        if self.services is None:
-            return
-        kind = self._note_kind.currentText()
-        subject = self._note_subject.text().strip()
-        body = self._note_body.toPlainText()
-        if not subject or not body:
-            QMessageBox.warning(
-                self, self._t("Auto-Shark"), self._t("Subject ID and body are required.")
-            )
-            return
-        try:
-            self.services.add_note(kind, subject, body)
-        except (OSError, ValueError) as error:
-            QMessageBox.critical(self, self._t("Auto-Shark"), str(error))
-            return
-        self._note_body.clear()
-        self._refresh_page("Notes")()
-
-    def _apply_review_mark(self) -> None:
-        if self.services is None:
-            return
-        kind = self._note_kind.currentText()
-        subject = self._note_subject.text().strip()
-        state = self._mark_state.currentText()
-        if not subject:
-            QMessageBox.warning(self, self._t("Auto-Shark"), self._t("Subject ID is required."))
-            return
-        try:
-            self.services.set_review_mark(kind, subject, state)
-        except (OSError, ValueError) as error:
-            QMessageBox.critical(self, self._t("Auto-Shark"), str(error))
-            return
-        self.refresh_current_page()
-
-    def _update_selected_note(self) -> None:
-        if self.services is None:
-            return
-        row = self._notes_table.currentRow()
-        if row < 0 or row >= len(self._note_items):
-            QMessageBox.information(self, self._t("Auto-Shark"), self._t("Select a note first."))
-            return
-        note = self._note_items[row]
-        note_id = str(note.get("note_id", ""))
-        body = self._note_body.toPlainText()
-        if not body:
-            QMessageBox.warning(self, self._t("Auto-Shark"), self._t("Enter the new body first."))
-            return
-        try:
-            self.services.update_note(note_id, body)
-        except (OSError, ValueError) as error:
-            QMessageBox.critical(self, self._t("Auto-Shark"), str(error))
-            return
-        self._refresh_page("Notes")()
-
     def _change_task_state(self) -> None:
         if self.services is None:
             return
@@ -980,9 +1507,10 @@ class MainWindow(QMainWindow):
         dialog.setWindowTitle(self._t("Change manual task state"))
         form = QFormLayout(dialog)
         combo = QComboBox()
-        combo.addItems(TASK_STATES)
+        for key in TASK_STATES:
+            combo.addItem(self._t(key), key)
         current = str(task.get("state", "open"))
-        index = combo.findText(current)
+        index = combo.findData(current)
         if index >= 0:
             combo.setCurrentIndex(index)
         form.addRow("New state", combo)
@@ -995,11 +1523,13 @@ class MainWindow(QMainWindow):
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         try:
-            self.services.update_manual_task_state(task_id, combo.currentText())
+            self.services.update_manual_task_state(
+                task_id, str(combo.currentData() or combo.currentText())
+            )
         except (OSError, ValueError) as error:
             QMessageBox.critical(self, self._t("Auto-Shark"), str(error))
             return
-        self._refresh_page("Manual queue")()
+        self._refresh_queue()
 
     # --------------------------------------------------------------- helpers
 
@@ -1071,18 +1601,196 @@ class MainWindow(QMainWindow):
         for row_index, row in enumerate(rows):
             for column, value in enumerate(row):
                 table.setItem(row_index, column, _cell(value))
+        _fit_table_columns(table)
+
+    def _player_kind(self, kind: str) -> str:
+        if not kind:
+            return ""
+        translated = self._t(kind)
+        if translated != kind:
+            return translated
+        return kind.replace("_", " ").replace("-", " ")
+
+    def _player_detector(self, detector: str) -> str:
+        lower = detector.lower()
+        if "sql" in lower:
+            return self._t("SQL injection")
+        if "webshell" in lower or "shell" in lower:
+            return self._t("WebShell")
+        if "flag" in lower:
+            return self._t("known-flag")
+        if "usb" in lower:
+            return self._t("USB keyboard")
+        if "password-protected" in lower:
+            return self._t("Password-protected archive")
+        if "pcap-header" in lower:
+            return self._t("Repaired zeroed PCAP global header")
+        if "nested-container" in lower:
+            return self._t("Not a packet capture; nested files inside")
+        if "http-status" in lower or "contradiction" in lower:
+            return self._t("HTTP status/body mismatch")
+        return self._t(detector.split(".")[-1].replace("_", " ") or detector)
+
+    def _finding_look_at(self, item: dict) -> str:
+        description = str(item.get("description") or "")
+        typed_marker = "Typed string:"
+        if typed_marker in description:
+            typed = description.split(typed_marker, 1)[1].strip().rstrip(".")
+            return f"{self._t('Typed keys:')} {typed}"
+        marker = "Key-down sequence preview:"
+        if marker in description:
+            keys = description.split(marker, 1)[1].strip().rstrip(".")
+            if typed_marker in keys:
+                keys = keys.split(typed_marker, 1)[0].strip().rstrip(".")
+            joined = keys.replace(", ", "")
+            return f"{self._t('Typed keys:')} {joined}"
+        title = str(item.get("title") or description)
+        return self._t(title) or title
+
+    def _evidence_sentence(self, item: dict) -> str:
+        links = list(item.get("evidence") or [])
+        if not links:
+            return str(item.get("description") or item.get("title") or "")
+        link = links[0]
+        start = link.get("frame_start")
+        end = link.get("frame_end")
+        frame = "" if start in (None, "") else f"{self._t('Frame')} {start}"
+        if end not in (None, "", start) and frame:
+            frame = f"{frame}-{end}"
+        bits = [part for part in (frame, link.get("source_kind"), link.get("field_name")) if part]
+        extra = ""
+        total = int(item.get("evidence_total") or len(links))
+        if total > 1:
+            extra = f" · {total}"
+        return " · ".join(str(bit) for bit in bits) + extra
+
+    def _show_findings_detail(self) -> None:
+        table = self.sender()
+        if table is self._findings_table:
+            self._show_selected_json("Findings", self._findings_table, self._finding_items)
+        else:
+            self._show_selected_json("Findings", self._candidates_table, self._candidate_items)
+
+    def _copy_findings_flag(self, item) -> None:
+        row = item.row()
+        if 0 <= row < len(self._candidate_items):
+            value = str(
+                self._candidate_items[row].get("normalized_value")
+                or self._candidate_items[row].get("raw_value")
+                or item.text()
+            )
+            from PySide6.QtWidgets import QApplication
+
+            QApplication.clipboard().setText(value)
+            self.statusBar().showMessage(self._t("Copied: ") + value, 5000)
+
+    # -------------------------------------------------------- content viewers
+
+    def _view_http_body(self, role: str) -> None:
+        row = self._http_table.currentRow()
+        if self.services is None or not 0 <= row < len(self._http_items):
+            QMessageBox.information(self, self._t("Auto-Shark"), self._t("Select a row first."))
+            return
+        item = self._http_items[row]
+        request = item.get("request") or {}
+        response = item.get("response") or {}
+        message_id = (
+            request.get("message_id") if role == "request" else response.get("message_id")
+        )
+        path = self.services.http_body_path(str(message_id or ""))
+        title = f"{request.get('method', '')} {request.get('uri', '')} [{role}]"
+        if path is None or not path.is_file():
+            QMessageBox.information(
+                self,
+                self._t("Auto-Shark"),
+                self._t("No stored body for this message (absent or not extracted)."),
+            )
+            return
+        from .hexview import read_bounded, view_bytes
+
+        view_bytes(self, title, read_bounded(path), f"{role} body · {path.stat().st_size} bytes")
+
+    def _view_selected_stream(self) -> None:
+        row = self._streams_table.currentRow()
+        if self.services is None or not 0 <= row < len(self._streams_items):
+            QMessageBox.information(self, self._t("Auto-Shark"), self._t("Select a row first."))
+            return
+        item = self._streams_items[row]
+        evidence = item.get("evidence") or {}
+        sha256 = evidence.get("blob_sha256")
+        path = self.services.blob_path(str(sha256)) if sha256 else None
+        if path is None or not path.is_file():
+            QMessageBox.information(
+                self,
+                self._t("Auto-Shark"),
+                self._t("No stored stream content (run tcp-text/telnet stages first)."),
+            )
+            return
+        from .hexview import read_bounded, view_bytes
+
+        title = f"TCP stream {item.get('stream_index')} [{item.get('direction')}]"
+        note = (
+            f"frames {evidence.get('frame_start')}-{evidence.get('frame_end')} · "
+            f"{evidence.get('byte_length')} bytes"
+        )
+        view_bytes(self, title, read_bounded(path), note)
+
+    def _view_selected_telnet(self) -> None:
+        row = self._telnet_table.currentRow()
+        if self.services is None or not 0 <= row < len(self._telnet_items):
+            QMessageBox.information(self, self._t("Auto-Shark"), self._t("Select a row first."))
+            return
+        item = self._telnet_items[row]
+        # Prefer the raw reconstructed direction streams (full bytes); fall
+        # back to the per-record bounded previews carried on the item.
+        from .hexview import read_bounded, view_bytes, view_text
+
+        directions = item.get("directions") or {}
+        for name in ("client", "server"):
+            direction = directions.get(name) or {}
+            sha256 = direction.get("blob_sha256")
+            if not sha256:
+                continue
+            path = self.services.blob_path(str(sha256))
+            if path is not None and path.is_file():
+                view_bytes(
+                    self,
+                    f"Telnet stream {item.get('stream_index')} [{name}]",
+                    read_bounded(path),
+                    f"{direction.get('byte_length')} bytes · {direction.get('status')}",
+                )
+                return
+        records = []
+        for record in list(item.get("records") or []):
+            preview = record.get("preview")
+            if preview:
+                role = record.get("direction_role") or "?"
+                records.append(f"[{role}] {preview}")
+        if not records:
+            QMessageBox.information(
+                self,
+                self._t("Auto-Shark"),
+                self._t("No Telnet preview stored (run the telnet stage first)."),
+            )
+            return
+        view_text(
+            self,
+            f"Telnet {item.get('dialogue_id')}",
+            "\n".join(records),
+            f"{len(records)} records",
+        )
 
     # ------------------------------------------------------------- refreshers
 
     def _register_refreshers(self) -> None:
         self._register_refresher("Overview", self._refresh_overview)
+        self._register_refresher("Files", self._refresh_files)
         self._register_refresher("HTTP", self._refresh_http)
         self._register_refresher("Streams", self._refresh_streams)
         self._register_refresher("Telnet", self._refresh_telnet)
         self._register_refresher("Findings", self._refresh_findings)
         self._register_refresher("Timeline", self._refresh_timeline)
         self._register_refresher("Manual queue", self._refresh_queue)
-        self._register_refresher("Notes", self._refresh_notes)
         self._register_refresher("Export", self._refresh_export)
 
     def _paged_payload(self, name: str, loader: Callable[[], dict]) -> Optional[dict]:
@@ -1100,7 +1808,11 @@ class MainWindow(QMainWindow):
         if not self._require_services("Overview"):
             table.setRowCount(0)
             self._overview_json.setPlainText("")
+            self._fill_table(self._queue_table, [])
+            self._overview_stack.setCurrentIndex(0)
+            self._refresh_start_panel()
             return
+        self._overview_stack.setCurrentIndex(1)
         try:
             payload = self.services.overview()
         except (OSError, ValueError, KeyError) as error:
@@ -1108,6 +1820,7 @@ class MainWindow(QMainWindow):
             return
         capture = payload.get("capture", {})
         overview = payload.get("overview", {})
+        self._populate_wizard()
         rows = [
             (self._t("Capture"), capture.get("source_name", "")),
             (self._t("Capture SHA-256"), str(capture.get("sha256", ""))),
@@ -1137,6 +1850,43 @@ class MainWindow(QMainWindow):
         self._banners["Overview"].setText(
             self._t("Overview ready.") + (f" {extra}" if extra else "")
         )
+        self._refresh_queue()
+
+    def _refresh_files(self) -> None:
+        if not self._require_services("Files"):
+            self._fill_table(self._files_table, [])
+            return
+        try:
+            payload = self.services.files()
+        except (OSError, ValueError, KeyError) as error:
+            self._banners["Files"].setText(self._t("error: ") + str(error))
+            return
+        items = list(payload.get("items") or [])
+        self._files_items = items
+        self._fill_table(
+            self._files_table,
+            [
+                (
+                    item.get("name"),
+                    item.get("media_type"),
+                    item.get("magic"),
+                    item.get("byte_length"),
+                    str(item.get("sha256"))[:16],
+                )
+                for item in items
+            ],
+        )
+        if items:
+            self._banners["Files"].setText(
+                self._t("Showing") + f" {len(items)} " + self._t("of") + f" {payload.get('total')}"
+            )
+        else:
+            self._banners["Files"].setText(
+                self._t(
+                    "No extracted files yet. They appear after the scan stage "
+                    "(run the full analysis first)."
+                )
+            )
 
     def _refresh_http(self) -> None:
         offset = self._offsets.get("HTTP", 0)
@@ -1250,6 +2000,7 @@ class MainWindow(QMainWindow):
             self._finding_items = []
             self._fill_table(self._candidates_table, [])
             self._fill_table(self._findings_table, [])
+            self._refresh_timeline()
             return
         candidates = list(payload.get("candidates", []))
         findings = list(payload.get("findings", []))
@@ -1259,9 +2010,9 @@ class MainWindow(QMainWindow):
             self._candidates_table,
             [
                 (
-                    item.get("rank_score"),
-                    item.get("kind"),
-                    item.get("normalized_value"),
+                    item.get("normalized_value") or item.get("raw_value"),
+                    self._player_kind(str(item.get("kind") or "")),
+                    self._evidence_sentence(item),
                     item.get("confidence"),
                 )
                 for item in candidates
@@ -1271,10 +2022,10 @@ class MainWindow(QMainWindow):
             self._findings_table,
             [
                 (
-                    item.get("severity"),
-                    item.get("detector"),
-                    item.get("title"),
-                    item.get("confidence"),
+                    self._player_detector(str(item.get("detector") or "")),
+                    self._finding_look_at(item),
+                    self._t(str(item.get("recommended_action") or ""))
+                    or self._evidence_sentence(item),
                 )
                 for item in findings
             ],
@@ -1284,9 +2035,10 @@ class MainWindow(QMainWindow):
             offset=offset,
             count=len(candidates),
             total=payload.get("candidate_total", len(candidates)),
-            extra=f"; findings {len(findings)} of "
-            f"{payload.get('finding_total', len(findings))}",
+            extra=f"; {self._t('Exam points:')} {len(findings)} "
+            f"{self._t('of')} {payload.get('finding_total', len(findings))}",
         )
+        self._refresh_timeline()
 
     def _refresh_timeline(self) -> None:
         offset = self._offsets.get("Timeline", 0)
@@ -1309,10 +2061,9 @@ class MainWindow(QMainWindow):
             [
                 (
                     item.get("request_frame"),
-                    item.get("event_kind"),
+                    self._player_kind(str(item.get("event_kind") or "")),
                     item.get("target"),
                     item.get("status"),
-                    item.get("semantic_key"),
                 )
                 for item in items
             ],
@@ -1327,11 +2078,11 @@ class MainWindow(QMainWindow):
 
     def _refresh_queue(self) -> None:
         offset = self._offsets.get("Manual queue", 0)
-        state = self._queue_state.currentText()
+        state = self._queue_state.currentData() or self._queue_state.currentText()
         payload = self._paged_payload(
             "Manual queue",
             lambda: self.services.manual_queue(
-                state=None if state == "all" else state, offset=offset
+                state=None if state == "all" else str(state), offset=offset
             ),
         )
         if payload is None:
@@ -1356,33 +2107,6 @@ class MainWindow(QMainWindow):
         self._set_banner(
             "Manual queue",
             offset=offset,
-            count=payload.get("count", len(items)),
-            total=payload.get("total", len(items)),
-        )
-
-    def _refresh_notes(self) -> None:
-        payload = self._paged_payload("Notes", lambda: self.services.notes())
-        if payload is None:
-            self._note_items = []
-            self._fill_table(self._notes_table, [])
-            return
-        items = list(payload.get("items", []))
-        self._note_items = items
-        self._fill_table(
-            self._notes_table,
-            [
-                (
-                    item.get("note_id"),
-                    item.get("subject_kind"),
-                    item.get("subject_id"),
-                    item.get("body"),
-                )
-                for item in items
-            ],
-        )
-        self._set_banner(
-            "Notes",
-            offset=payload.get("offset", 0),
             count=payload.get("count", len(items)),
             total=payload.get("total", len(items)),
         )

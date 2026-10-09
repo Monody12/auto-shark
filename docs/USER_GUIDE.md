@@ -4,6 +4,61 @@ This guide walks through the complete analysis workflow on one offline
 PCAP/PCAPNG capture. All examples use PowerShell on Windows; the same
 commands work on Linux with `uv run auto-shark ...`.
 
+## 0. Fastest path: the GUI solve wizard
+
+Open the GUI and simply open or drag-and-drop a `.pcap`/`.pcapng` file —
+the project is created in the background and the full analysis starts
+automatically. Press **?** in the top-right corner for a five-step usage
+card. The sidebar always shows **Solve wizard / Files / HTTP / TCP streams /
+Findings**; Telnet appears only when that protocol is present. Timeline,
+manual queue, and export are folded into those pages or the File menu.
+
+When analysis finishes you land on the **solve wizard** page:
+
+- **Protocol hierarchy** — the same first glance you would do in Wireshark
+  (Statistics > Protocol Hierarchy), with link/transport noise demoted.
+- **Challenge types** — recognized patterns (HTTP upload, directory
+  brute-force, WebShell, SQL injection, DNS tunnel, USB HID, Telnet/FTP
+  credentials, generic TCP payload, VoIP, SNMP) with the concrete evidence
+  (frame numbers, request URIs, counts) and a double-click jump to the page
+  that carries the payload.
+- **Flag candidates** — ranked values; double-click copies to the clipboard.
+- **Fallback checklist** — when nothing is recognized, the standard
+  five-step funnel (overview > export objects > keyword search > follow
+  streams > scripted extraction) is shown instead of a blank page.
+
+Enter the challenge's **flag format** (a regex fragment such as
+`SUCTF\{[^}]{1,128}\}`) on the wizard and press **Rescan** — the stored
+evidence is re-scanned in seconds without re-running TShark. The same
+pattern drives the CLI:
+
+```powershell
+uv run auto-shark flag-format "$projects\case1.auto-shark" --set 'SUCTF\{[^}]{1,128}\}'
+uv run auto-shark triage "$projects\case1.auto-shark" --flag-format 'SUCTF\{[^}]{1,128}\}'
+```
+
+The **Files** page lists every carved/exported artifact with type, size, a
+content viewer, and an open-in-Explorer button. HTTP request/response
+bodies, TCP streams, and Telnet dialogues each have hex+ASCII content
+viewers with the source frame range.
+
+**Search everywhere** (wizard, or `auto-shark grep "$project" flag`) runs
+one keyword over every stored body, stream, artifact, and concatenated
+ICMP payload simultaneously, including the hex and base64-encoded forms of
+the keyword — the automated replacement for `strings x.pcap | grep flag`
+plus manual encoding hunts.
+
+**TLS decryption**: pass `--tls-keylog ssl_keys.log` (or name the file
+`ssl_keys.log` next to the capture and it is auto-detected) to decrypt
+ECDHE/TLS 1.3 sessions; `--tls-rsa-key` still covers legacy RSA key
+exchange. Decrypted HTTP then flows through the same body, scan, and
+detector pipeline.
+
+A stage that cannot run on your TShark build is skipped with a recorded
+reason (summarized once after analysis); it never aborts the remaining
+stages, so one unavailable protocol family can no longer leave every page
+empty.
+
 ## 1. Setup
 
 - Python 3.11 for the GUI, 3.9+ for the CLI core.
@@ -187,8 +242,16 @@ directly, creates (or reopens) a machine-local project under
 `%LOCALAPPDATA%\AutoShark\projects`, and runs the staged analysis
 automatically. The GUI correlates FTP transfers before static-file carving, so
 downloaded archives and executables reach the artifact review queue without a
-separate command. Configure TShark or the optional Linux node once in
-`Edit > Settings…` (the dialog probes both and persists the paths):
+separate command. Configure TShark once in `Edit > Settings…`. The dialog is
+TShark-first: choose `tshark.exe`, press **Check**, and Auto-Shark explains
+when the copy is older than 4.0 (Wireshark 2.x/3.x cannot drive this tool).
+The remote Linux node stays hidden under **Show advanced**. Fill it in only
+when you have a Linux machine with extra tools (zsteg, binwalk, …). The host
+field is `user@IP` or `user@domain` (SSH only, port 22 by default). Passwords
+are not supported; use an OpenSSH private key or ssh-agent, then press
+**Probe remote node**. Ordinary traffic challenges do not need this. Analysis
+projects always live under `%LOCALAPPDATA%\AutoShark\projects`, including when
+the program itself is installed in Program Files.
 
 ```powershell
 uv run auto-shark gui            # requires the optional gui extra

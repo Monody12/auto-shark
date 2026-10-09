@@ -5,7 +5,7 @@ import zipfile
 
 import pytest
 
-from auto_shark.files.signatures import discover_file_candidates
+from auto_shark.files.signatures import discover_file_candidates, rar_is_password_protected
 
 
 def _png_chunk(kind: bytes, data: bytes = b"") -> bytes:
@@ -23,6 +23,53 @@ def _minimal_jpeg(entropy: bytes = b"image") -> bytes:
         b"\xff\xe0\x00\x04JF"
         b"\xff\xda\x00\x08\x01\x01\x00\x00\x3f\x00" + entropy + b"\xff\xd9"
     )
+
+
+def test_flags_password_protected_rar4_headers(tmp_path) -> None:
+    header = (
+        b"Rar!\x1a\x07\x00"
+        + b"\x00\x00"
+        + bytes([0x73])
+        + (0x0080).to_bytes(2, "little")
+        + (13).to_bytes(2, "little")
+        + b"\x00" * 6
+    )
+    path = tmp_path / "secret.rar"
+    path.write_bytes(header + b"\x00" * 32)
+    candidate = discover_file_candidates(path).candidates[0]
+    assert candidate.format == "rar4"
+    assert "password-protected" in candidate.validation_detail
+
+
+def test_flags_password_protected_rar5_file_extra(tmp_path) -> None:
+    # Minimal RAR5 prefix whose file header extra record type is 1 (encryption).
+    payload = bytes.fromhex(
+        "526172211a0701003392b5e50a01050600050101808000d6d13eed5502033cb000049d"
+        "0020c21faf0780030008666c61672e747874300100030fb91f48d389897c2ae61ba533"
+        "7fd51941c1fad6fd3a0ddddd77864fd41b9d5e1faa5353b25f95ff3fb4f8bd300a0302"
+        "8f7dc18ecdf7d601"
+    )
+    path = tmp_path / "flag.rar"
+    path.write_bytes(payload)
+    with path.open("rb") as stream:
+        assert rar_is_password_protected(stream, 0, len(payload), "rar5") is True
+    candidate = discover_file_candidates(path).candidates[0]
+    assert candidate.format == "rar5"
+    assert "password-protected" in candidate.validation_detail
+
+
+def test_flags_password_protected_zip_members(tmp_path) -> None:
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w") as output:
+        output.writestr("flag.txt", "secret")
+    data = bytearray(archive.getvalue())
+    data[6] |= 0x1
+    path = tmp_path / "encrypted.bin"
+    path.write_bytes(bytes(data))
+    candidate = discover_file_candidates(path).candidates[0]
+    assert candidate.format == "zip"
+    assert candidate.structural_status == "validated"
+    assert "password-protected" in candidate.validation_detail
 
 
 def test_discovers_embedded_zip_with_eocd_comment_and_trailing_bytes(tmp_path) -> None:

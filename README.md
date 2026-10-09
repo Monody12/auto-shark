@@ -64,12 +64,49 @@ Or do the same from the Windows GUI (`--extra gui` required):
 uv run auto-shark gui
 ```
 
+The GUI is the primary human surface and follows the standard CTF solving
+funnel: open (or drag-and-drop) a capture and the full analysis starts
+automatically — no separate menu step. The landing page is a **solve wizard**:
+protocol hierarchy, recognized challenge types (HTTP upload, directory
+brute-force, WebShell, SQL injection, DNS tunneling, USB HID, Telnet/FTP
+credentials, VoIP, SNMP) with evidence and a double-click jump to the right
+page, ranked flag candidates (double-click to copy), and an honest five-step
+checklist when nothing fires. A per-challenge flag format (regex) can be
+entered on the wizard and re-scans the stored evidence in seconds; the same
+pattern is available to the CLI as `--flag-format` / `flag-format`. The Files
+page lists every carved/exported artifact, and HTTP bodies, TCP streams, and
+Telnet dialogues have hex+ASCII content viewers.
+
+TShark is located automatically (settings → `AUTO_SHARK_TSHARK` → PATH →
+Program Files → registry → `AUTO_SHARK_TSHARK_DIRS`), preferring the newest
+installed version; auto-discovered copies below 4.x are rejected. Individual
+analysis stages that cannot run are skipped with a recorded reason instead of
+aborting the pipeline, and stage failures are summarized once at the end.
+
+TLS decryption accepts either a challenge-provided RSA private key
+(`--tls-rsa-key`, legacy key exchange only) or an NSS keylog file
+(`--tls-keylog`, covers ECDHE/TLS 1.3). A keylog named `ssl_keys.log`
+(next to the capture) is picked up automatically. Global search
+(`Search everywhere` on the wizard, or `auto-shark grep <project> <needle>`)
+scans every stored body/stream/file at once with raw, hex, and base64
+alignment variants. ICMP stages cover both the TTL side channel and
+data-payload concatenation (`icmp-data-stream` evidence); SNMP
+variable-binding strings are concatenated into scannable evidence
+(`snmp-triage`). The transform chain decodes hex/base64 and now also
+gzip/zlib layers, so base64-compressed WebShell payloads unravel
+automatically. The built-in flag
+pattern understands `flag{…}`, `key: …`, `key=…`, and English
+`the key is …` phrasing, in addition to any challenge-specific regex.
+
 For Windows users, the GitHub Release provides two application packages:
 
-- `AutoShark-Windows-x64-Setup.exe` is the per-user installer. It uses a
-  stable application identity and fixed install directory, so running a newer
-  installer upgrades the existing copy instead of creating a version-named
-  directory. Projects under `%LOCALAPPDATA%\AutoShark\projects` are retained.
+- `AutoShark-Windows-x64-Setup.exe` is the Windows installer. The wizard lets
+  you choose a per-user install (`%LOCALAPPDATA%\Programs\Auto-Shark`) or a
+  machine-wide install (`C:\Program Files\Auto-Shark`, requires Administrator).
+  Silent flags are `/CURRENTUSER` and `/ALLUSERS`. The application identity is
+  stable, so a newer installer upgrades the existing copy instead of creating a
+  version-named directory. Analysis projects stay under
+  `%LOCALAPPDATA%\AutoShark\projects` in both modes.
 - `AutoShark-Windows-x64-Portable.zip` is the no-install package. Its archive
   root is always `AutoShark`, so extracting a new release into the same parent
   does not create a new version directory. Close the application before
@@ -82,7 +119,7 @@ installation requirements.
 The GUI opens or creates projects, runs the staged analysis pipeline with
 progress and between-stage cancellation, and provides bounded pages for
 overview, HTTP, streams, Telnet, candidates/findings, the WebShell timeline,
-the manual queue, notes/review marks, and bundle export. The new-project dialog
+the WebShell timeline, and bundle export. The new-project dialog
 accepts an optional legacy TLS RSA private key for the initial analysis run;
 the path and key bytes are not saved in GUI settings or project metadata.
 
@@ -161,6 +198,7 @@ request/result hash verification:
 
 ```powershell
 uv run auto-shark remote-probe --host user@node --path /usr/bin/python3
+uv run auto-shark remote-probe --host user@node --port 22 --identity $env:USERPROFILE\.ssh\id_ed25519 --path /usr/bin/python3 --path /usr/bin/binwalk
 uv run auto-shark remote-run <project> manifest.json --artifact <id> --host user@node
 ```
 

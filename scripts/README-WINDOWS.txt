@@ -3,10 +3,13 @@ Auto-Shark for Windows
 
 Auto-Shark is distributed in two forms:
 
-1. Installer: run AutoShark-Windows-x64-Setup.exe. New releases use the same
-   application identity and install directory, so installing a newer release
-   upgrades the existing copy in place. Analysis projects remain under your
-   local application-data directory and are not removed during upgrades.
+1. Installer: run AutoShark-Windows-x64-Setup.exe. The wizard asks whether to
+   install for the current user (AppData\Local\Programs\Auto-Shark) or for all
+   users (Program Files\Auto-Shark, Administrator required). Silent flags:
+   /CURRENTUSER and /ALLUSERS. New releases use the same application identity,
+   so installing a newer release upgrades the existing copy in place. Analysis
+   projects remain under %LOCALAPPDATA%\AutoShark\projects and are not removed
+   during upgrades.
 
 2. Portable: extract AutoShark-Windows-x64-Portable.zip. The archive always
    contains a stable AutoShark directory instead of a version-named directory.

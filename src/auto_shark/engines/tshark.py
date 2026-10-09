@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
@@ -116,6 +117,93 @@ class TlsRsaKey:
         return [replacement if value == self.preference_value else value for value in argv]
 
 
+TLS_KEYLOG_MAX_BYTES = 1024 * 1024
+_KEYLOG_LABELS = (
+    b"CLIENT_RANDOM",
+    b"CLIENT_HANDSHAKE_TRAFFIC_SECRET",
+    b"SERVER_HANDSHAKE_TRAFFIC_SECRET",
+    b"CLIENT_EARLY_TRAFFIC_SECRET",
+    b"EXPORTER_SECRET",
+)
+_KEYLOG_FILENAMES = (
+    "ssl_keys.log",
+    "sslkeylogfile.txt",
+    "tls_keys.log",
+    "keylog.txt",
+    "ssl.log",
+)
+
+
+@dataclass(frozen=True)
+class TlsKeylog:
+    """A TLS keylog file (NSS format) enabling ECDHE/TLS 1.3 decryption."""
+
+    path: Path
+    byte_length: int
+    sha256: str
+
+    @property
+    def preference_value(self) -> str:
+        return f"tls.keylog_file:{self.path}"
+
+    @property
+    def arguments(self) -> tuple[str, str]:
+        return ("-o", self.preference_value)
+
+    def redact_argv(self, argv: Sequence[str]) -> list[str]:
+        replacement = (
+            f"tls.keylog_file:<redacted sha256={self.sha256} bytes={self.byte_length}>"
+        )
+        return [replacement if value == self.preference_value else value for value in argv]
+
+
+def load_tls_keylog(path: Path) -> TlsKeylog:
+    resolved = Path(path).expanduser().resolve()
+    if not resolved.is_file():
+        raise FileNotFoundError(str(resolved))
+    byte_length = resolved.stat().st_size
+    if byte_length <= 0:
+        raise ValueError("TLS keylog file is empty")
+    if byte_length > TLS_KEYLOG_MAX_BYTES:
+        raise ValueError(f"TLS keylog file exceeds {TLS_KEYLOG_MAX_BYTES} bytes")
+    digest = hashlib.sha256()
+    saw_label = False
+    bytes_read = 0
+    with resolved.open("rb") as handle:
+        for index, line in enumerate(handle):
+            if index >= 50:
+                break
+            if any(line.startswith(label) for label in _KEYLOG_LABELS):
+                saw_label = True
+    with resolved.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(64 * 1024), b""):
+            bytes_read += len(chunk)
+            digest.update(chunk)
+    if bytes_read != byte_length:
+        raise ValueError("TLS keylog file changed while it was being read")
+    if not saw_label:
+        raise ValueError(
+            "TLS keylog file has no recognized key lines "
+            "(expected CLIENT_RANDOM / *_TRAFFIC_SECRET entries)"
+        )
+    return TlsKeylog(resolved, byte_length, digest.hexdigest())
+
+
+def find_tls_keylog(capture: Path) -> Optional[TlsKeylog]:
+    """Auto-detect a sibling keylog next to the capture (challenge layouts)."""
+
+    directory = Path(capture).expanduser().resolve().parent
+    for name in _KEYLOG_FILENAMES:
+        candidate = directory / name
+        if not candidate.is_file():
+            continue
+        try:
+            return load_tls_keylog(candidate)
+        except (OSError, ValueError):
+            continue
+    return None
+
+
 def load_tls_rsa_key(path: Path) -> TlsRsaKey:
     resolved = Path(path).expanduser().resolve()
     if not resolved.is_file():
@@ -156,7 +244,12 @@ class TsharkCapabilities:
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=False, sort_keys=True, indent=2)
 
-    def to_provenance_json(self, *, tls_rsa_key: Optional[TlsRsaKey] = None) -> str:
+    def to_provenance_json(
+        self,
+        *,
+        tls_rsa_key: Optional[TlsRsaKey] = None,
+        tls_keylog: Optional[TlsKeylog] = None,
+    ) -> str:
         """Return a compact, stable snapshot suitable for repeated tool runs."""
 
         def registry(values: tuple[str, ...]) -> dict[str, object]:
@@ -186,20 +279,186 @@ class TsharkCapabilities:
                 "byte_length": tls_rsa_key.byte_length,
                 "sha256": tls_rsa_key.sha256,
             }
+        if tls_keylog is not None:
+            payload["tls_keylog"] = {
+                "byte_length": tls_keylog.byte_length,
+                "sha256": tls_keylog.sha256,
+            }
         return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
-def find_tshark(explicit: Optional[Path] = None) -> Optional[Path]:
+_WINDOWS_INSTALL_LAYOUTS = (
+    "Wireshark",
+    "Wireshark-Portable",
+    "Apps\\Wireshark",
+)
+_VERSION_PATTERN = re.compile(r"(\d+)\.(\d+)(?:\.(\d+))?")
+_VERSION_CACHE: dict[tuple[str, int, int], Optional[tuple[int, int, int]]] = {}
+_PROBE_CACHE: dict[tuple[str, int, int], TsharkCapabilities] = {}
+# Auto-discovered tshark must be 4.x+: 2.x/3.x builds lack the ``-E``
+# field-output options this tool's adapters rely on (see README requirements).
+MINIMUM_TSHARK_VERSION = (4, 0, 0)
+TSHARK_TOO_OLD_TEMPLATE = (
+    "This TShark is too old (found {found}, need ≥ 4.0). "
+    "Install Wireshark 4, or in Settings choose the tshark.exe from a portable "
+    "Wireshark 4."
+)
+
+
+def tshark_too_old(version: Optional[tuple[int, int, int]]) -> bool:
+    """True when a parsed TShark version is below the supported floor."""
+
+    return version is not None and version < MINIMUM_TSHARK_VERSION
+
+
+def format_tshark_too_old(version: tuple[int, int, int]) -> str:
+    found = ".".join(str(part) for part in version)
+    return TSHARK_TOO_OLD_TEMPLATE.format(found=found)
+
+
+class _Missing:
+    pass
+
+
+_MISSING = _Missing()
+
+
+def _parse_version_line(line: str) -> Optional[tuple[int, int, int]]:
+    match = _VERSION_PATTERN.search(line)
+    if match is None:
+        return None
+    major, minor, patch = match.groups()
+    return (int(major), int(minor), int(patch or 0))
+
+
+def _tshark_version(executable: Path) -> Optional[tuple[int, int, int]]:
+    """Best-effort ``--version`` probe used only to rank discovered copies."""
+
+    try:
+        stat = executable.stat()
+        cache_key = (str(executable), stat.st_mtime_ns, stat.st_size)
+    except OSError:
+        return None
+    cached = _VERSION_CACHE.get(cache_key, _MISSING)
+    if cached is not _MISSING:
+        return cached
+    try:
+        result = run_bounded(
+            [str(executable), "--version"],
+            timeout_seconds=10,
+            stdout_limit=64 * 1024,
+            stderr_limit=16 * 1024,
+        )
+        version: Optional[tuple[int, int, int]] = None
+        if result.returncode == 0:
+            decoded = result.stdout.decode("utf-8", errors="replace")
+            first_line = next((line for line in decoded.splitlines() if line), "")
+            version = _parse_version_line(first_line)
+    except (OSError, ValueError):
+        version = None
+    _VERSION_CACHE[cache_key] = version
+    return version
+
+
+def _registry_install_dirs() -> list[Path]:
+    if os.name != "nt":  # pragma: no cover - platform guard for non-Windows CI
+        return []
+    try:
+        import winreg
+    except ImportError:  # pragma: no cover - defensive
+        return []
+    dirs: list[Path] = []
+    for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+        for subkey in ("SOFTWARE\\Wireshark", "SOFTWARE\\WOW6432Node\\Wireshark"):
+            try:
+                with winreg.OpenKey(hive, subkey) as key:
+                    value, _ = winreg.QueryValueEx(key, "InstallDir")
+            except OSError:
+                continue
+            if isinstance(value, str) and value.strip():
+                dirs.append(Path(value.strip()))
+    return dirs
+
+
+def _default_search_dirs() -> list[Path]:
+    dirs: list[Path] = []
+    for variable in ("ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"):
+        base = os.environ.get(variable)
+        if base:
+            for layout in _WINDOWS_INSTALL_LAYOUTS:
+                dirs.append(Path(base) / layout / "tshark.exe")
+    local_programs = os.environ.get("LOCALAPPDATA")
+    if local_programs:
+        dirs.append(Path(local_programs) / "Programs" / "Wireshark" / "tshark.exe")
+    return dirs
+
+
+def discover_tshark_candidates(
+    explicit: Optional[Path] = None,
+    *,
+    extra_dirs: Sequence[Path] = (),
+) -> list[Path]:
+    """Return existing tshark candidates in user-configured-to-system order."""
+
+    candidates: list[Path] = []
     if explicit is not None:
         candidate = Path(explicit).expanduser()
-        return candidate.resolve() if candidate.is_file() else None
+        if candidate.is_file():
+            candidates.append(candidate.resolve())
     environment_path = os.environ.get("AUTO_SHARK_TSHARK")
     if environment_path:
         candidate = Path(environment_path).expanduser()
-        if candidate.is_file():
-            return candidate.resolve()
+        if candidate.is_file() and candidate.resolve() not in candidates:
+            candidates.append(candidate.resolve())
     discovered = shutil.which("tshark") or shutil.which("tshark.exe")
-    return Path(discovered).resolve() if discovered else None
+    if discovered:
+        resolved = Path(discovered).resolve()
+        if resolved not in candidates:
+            candidates.append(resolved)
+    for candidate in [*extra_dirs, *_registry_install_dirs(), *_default_search_dirs()]:
+        expanded = Path(candidate).expanduser()
+        if not expanded.is_file():
+            continue
+        resolved = expanded.resolve()
+        if resolved not in candidates:
+            candidates.append(resolved)
+    return candidates
+
+
+def find_tshark(
+    explicit: Optional[Path] = None,
+    extra_dirs: Sequence[Path] = (),
+) -> Optional[Path]:
+    """Locate the best available tshark, preferring the newest version.
+
+    An explicit path always wins (the user chose it). Auto-discovered
+    candidates must report a supported version: a decade-old bundled copy
+    (for example 2.x) fails mid-analysis with cryptic ``-E`` option errors,
+    so it is rejected up front and the caller can ask for an install.
+    """
+
+    candidates = discover_tshark_candidates(explicit, extra_dirs=extra_dirs)
+    if not candidates:
+        return None
+    if explicit is not None:
+        return candidates[0]
+    supported = [
+        candidate
+        for candidate in candidates
+        if (version := _tshark_version(candidate)) is not None
+        and version >= MINIMUM_TSHARK_VERSION
+    ]
+    if not supported:
+        return None
+    if len(supported) == 1:
+        return supported[0]
+    best = supported[0]
+    best_version = _tshark_version(best)
+    for candidate in supported[1:]:
+        version = _tshark_version(candidate)
+        if version is not None and version > (best_version or (0, 0, 0)):
+            best, best_version = candidate, version
+    return best
 
 
 def _run(executable: Path, arguments: Sequence[str]) -> ProcessResult:
@@ -256,6 +515,15 @@ def probe_tshark(path: Path) -> TsharkCapabilities:
     executable = Path(path).expanduser().resolve()
     if not executable.is_file():
         raise FileNotFoundError(str(executable))
+    try:
+        stat = executable.stat()
+        cache_key = (str(executable), stat.st_mtime_ns, stat.st_size)
+    except OSError:
+        cache_key = None
+    if cache_key is not None:
+        cached = _PROBE_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
 
     version_result = _run(executable, ["--version"])
     fields_result = _run(executable, ["-G", "fields"])
@@ -288,7 +556,27 @@ def probe_tshark(path: Path) -> TsharkCapabilities:
     features["http_export"] = "http" in exports
     features["ftp_data_export"] = "ftp-data" in exports
     first_line = next((line.strip() for line in _decode(version_result).splitlines() if line), "")
-    return TsharkCapabilities(
+    parsed_version = _parse_version_line(first_line)
+    version_errors: tuple[str, ...] = ()
+    if tshark_too_old(parsed_version) and parsed_version is not None:
+        found = ".".join(str(part) for part in parsed_version)
+        version_errors = (
+            f"tshark {found} is below the required {MINIMUM_TSHARK_VERSION[0]}.0.0",
+        )
+        errors = errors + version_errors
+    # ``--export-objects`` support is an optional accelerator: an old or
+    # stripped-down build that rejects it still parses protocols fine, so it
+    # only disables the export features instead of marking tshark unusable.
+    fatal = tuple(
+        error
+        for error in (
+            _error_for("version", version_result),
+            _error_for("fields", fields_result),
+            _error_for("protocols", protocols_result),
+        )
+        if error is not None
+    )
+    capabilities = TsharkCapabilities(
         executable=str(executable),
         version_line=first_line,
         fields=tuple(sorted(fields)),
@@ -296,6 +584,9 @@ def probe_tshark(path: Path) -> TsharkCapabilities:
         export_objects=tuple(sorted(exports)),
         features=features,
         missing_core_fields=missing_core,
-        usable=not errors and not missing_core,
+        usable=not fatal and not missing_core and not version_errors,
         errors=errors,
     )
+    if cache_key is not None:
+        _PROBE_CACHE[cache_key] = capabilities
+    return capabilities

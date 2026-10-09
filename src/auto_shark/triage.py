@@ -10,12 +10,18 @@ from pathlib import Path
 from typing import Optional
 
 from .core.ids import EvidenceLocator, candidate_id, evidence_id, stable_id
-from .project import inspect_project
-from .search import ByteMatch, scan_flag_matches
-from .storage import Database
+from .project import inspect_project, read_flag_format
+from .search import (
+    CSS_DECLARATION,
+    ByteMatch,
+    compile_flag_pattern,
+    scan_flag_matches,
+)
+from .storage import BlobStore, Database
 
 DETECTOR = "bounded-triage"
 DETECTOR_VERSION = "1"
+MAX_CAPTURE_SCAN_BYTES = 16 * 1024 * 1024
 SENSITIVE_FIELDS = {
     "api_key",
     "key",
@@ -96,6 +102,7 @@ def _utc_now() -> str:
 
 def _policy_json(
     *,
+    flag_format: Optional[str],
     max_evidence: int,
     max_evidence_bytes: int,
     max_total_bytes: int,
@@ -104,19 +111,18 @@ def _policy_json(
     max_field_bytes: int,
     window_bytes: int,
 ) -> str:
-    return json.dumps(
-        {
-            "max_candidates": max_candidates,
-            "max_evidence": max_evidence,
-            "max_evidence_bytes": max_evidence_bytes,
-            "max_field_bytes": max_field_bytes,
-            "max_matches_per_evidence": max_matches_per_evidence,
-            "max_total_bytes": max_total_bytes,
-            "window_bytes": window_bytes,
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    )
+    payload = {
+        "max_candidates": max_candidates,
+        "max_evidence": max_evidence,
+        "max_evidence_bytes": max_evidence_bytes,
+        "max_field_bytes": max_field_bytes,
+        "max_matches_per_evidence": max_matches_per_evidence,
+        "max_total_bytes": max_total_bytes,
+        "window_bytes": window_bytes,
+    }
+    if flag_format:
+        payload["flag_format"] = flag_format
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
 
 def _current_inputs(database: Database) -> tuple[_TriageInput, ...]:
@@ -160,6 +166,18 @@ def _current_inputs(database: Database) -> tuple[_TriageInput, ...]:
                b.id,b.sha256,b.byte_length,b.relative_path
         FROM evidence e JOIN blob b ON b.id=e.blob_id
         WHERE e.source_kind='smtp-attachment' AND b.complete=1
+        UNION
+        SELECT e.id,e.evidence_id,e.capture_id,e.protocol_message_id,e.transaction_id,
+               e.source_kind,'evidence',e.frame_start,e.frame_end,e.direction,
+               b.id,b.sha256,b.byte_length,b.relative_path
+        FROM evidence e JOIN blob b ON b.id=e.blob_id
+        WHERE e.source_kind='icmp-data-stream' AND b.complete=1
+        UNION
+        SELECT e.id,e.evidence_id,e.capture_id,e.protocol_message_id,e.transaction_id,
+               e.source_kind,'evidence',e.frame_start,e.frame_end,e.direction,
+               b.id,b.sha256,b.byte_length,b.relative_path
+        FROM evidence e JOIN blob b ON b.id=e.blob_id
+        WHERE e.source_kind='snmp-strings' AND b.complete=1
         ORDER BY evidence_public_id,input_kind,blob_sha256
     """
     with database.connect() as connection:
@@ -436,6 +454,15 @@ def _field_shape(value: str) -> tuple[str, float]:
     return "plain", 0.0
 
 
+def _looks_like_markup_noise(value: str) -> bool:
+    """True for CSS declarations / JS object literals mistaken for flags."""
+
+    if CSS_DECLARATION.search(value.encode("ascii", errors="ignore")):
+        return True
+    stripped = value.strip()
+    return stripped.startswith("{") and stripped.endswith("}") and '":' in stripped
+
+
 def _field_candidates(
     database: Database,
     project_root: Path,
@@ -475,6 +502,10 @@ def _field_candidates(
             continue
         field_name = str(row["name"]).strip().lower()
         sensitive = field_name in SENSITIVE_FIELDS
+        if not sensitive and _looks_like_markup_noise(value):
+            # Web-page noise (CSS declarations, JS object literals) rides
+            # along as context fields and buries real candidates.
+            continue
         kind = "sensitive-field" if sensitive else "context-field"
         role_score = 60.0 if field_name in PASSWORD_FIELDS else (50.0 if sensitive else 10.0)
         length_score = 10.0 if len(value) >= 32 else (5.0 if len(value) >= 8 else 1.0)
@@ -504,9 +535,111 @@ def _field_candidates(
     return count, public_ids
 
 
+def _store_blob(database: Database, project_root: Path, data: bytes) -> tuple[int, str, str]:
+    blob = BlobStore(project_root / "blobs").put_bytes(data)
+    relative_path = blob.path.relative_to(project_root).as_posix()
+    with database.connect() as connection:
+        connection.execute(
+            "INSERT INTO blob (sha256, byte_length, relative_path, complete, created_at) "
+            "VALUES (?, ?, ?, 1, ?) ON CONFLICT(sha256) DO UPDATE SET "
+            "complete=max(blob.complete, excluded.complete)",
+            (blob.sha256, blob.byte_length, relative_path, _utc_now()),
+        )
+        blob_id = int(
+            connection.execute("SELECT id FROM blob WHERE sha256=?", (blob.sha256,)).fetchone()[0]
+        )
+    return blob_id, blob.sha256, relative_path
+
+
+def _scan_capture_file(
+    database: Database,
+    project,
+    *,
+    compiled_pattern: re.Pattern[bytes],
+    remaining_candidates: int,
+    remaining_bytes: int,
+    window_bytes: int,
+    max_matches: int,
+) -> tuple[int, int, set[str]]:
+    """Scan the working capture bytes for known-format flags TShark did not index."""
+
+    if remaining_candidates <= 0 or remaining_bytes <= 0:
+        return 0, 0, set()
+    capture_path = project.capture_path
+    if not capture_path.is_file():
+        return 0, 0, set()
+    scan_budget = min(MAX_CAPTURE_SCAN_BYTES, remaining_bytes, capture_path.stat().st_size)
+    if scan_budget <= 0:
+        return 0, 0, set()
+    result = scan_flag_matches(
+        capture_path,
+        max_bytes=scan_budget,
+        max_matches=min(max_matches, remaining_candidates),
+        chunk_size=window_bytes,
+        pattern=compiled_pattern,
+    )
+    if not result.matches:
+        return 0, 0, set()
+    prefix = capture_path.read_bytes()[: result.scanned_bytes]
+    blob_id, blob_sha256, relative_path = _store_blob(database, project.root, prefix)
+    locator = EvidenceLocator(
+        capture_sha256=project.capture_sha256,
+        source_kind="capture-bytes",
+        byte_offset=0,
+        byte_length=len(prefix),
+    )
+    public_id = evidence_id(locator)
+    with database.connect() as connection:
+        capture_id = int(
+            connection.execute(
+                "SELECT id FROM capture WHERE sha256=?", (project.capture_sha256,)
+            ).fetchone()[0]
+        )
+        connection.execute(
+            "INSERT OR IGNORE INTO evidence "
+            "(evidence_id,capture_id,source_kind,byte_offset,byte_length,blob_id,locator_json) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (
+                public_id,
+                capture_id,
+                "capture-bytes",
+                0,
+                len(prefix),
+                blob_id,
+                json.dumps(locator.payload(), ensure_ascii=False, sort_keys=True),
+            ),
+        )
+        evidence_db_id = int(
+            connection.execute(
+                "SELECT id FROM evidence WHERE evidence_id=?", (public_id,)
+            ).fetchone()[0]
+        )
+    item = _TriageInput(
+        evidence_db_id=evidence_db_id,
+        evidence_public_id=public_id,
+        capture_id=capture_id,
+        protocol_message_id=None,
+        transaction_id=None,
+        source_kind="capture-bytes",
+        input_kind="evidence",
+        frame_start=None,
+        frame_end=None,
+        direction=None,
+        blob_id=blob_id,
+        blob_sha256=blob_sha256,
+        blob_length=len(prefix),
+        relative_path=relative_path,
+    )
+    public_ids: set[str] = set()
+    for match in result.matches:
+        public_ids.add(_persist_known_match(database, project.capture_sha256, item, match))
+    return len(result.matches), result.scanned_bytes, public_ids
+
+
 def triage_project(
     project_path: Path,
     *,
+    flag_pattern: Optional[str] = None,
     max_evidence: int = 10_000,
     max_evidence_bytes: int = 64 * 1024 * 1024,
     max_total_bytes: int = 256 * 1024 * 1024,
@@ -529,8 +662,12 @@ def triage_project(
     project = inspect_project(project_path)
     database = Database(project.root / "project.sqlite")
     database.initialize()
+    if flag_pattern is None:
+        flag_pattern = read_flag_format(project.root)
+    compiled_pattern = compile_flag_pattern(flag_pattern)
     inputs = _current_inputs(database)
     policy = _policy_json(
+        flag_format=flag_pattern,
         max_evidence=max_evidence,
         max_evidence_bytes=max_evidence_bytes,
         max_total_bytes=max_total_bytes,
@@ -591,6 +728,7 @@ def triage_project(
                     max_candidates - len(candidate_public_ids),
                 ),
                 chunk_size=window_bytes,
+                pattern=compiled_pattern,
             )
             scanned_bytes += result.scanned_bytes
             evidence_scanned += 1
@@ -638,6 +776,18 @@ def triage_project(
         max_field_bytes,
     )
     candidate_public_ids.update(field_public_ids)
+    capture_matches, capture_bytes, capture_ids = _scan_capture_file(
+        database,
+        project,
+        compiled_pattern=compiled_pattern,
+        remaining_candidates=max_candidates - len(candidate_public_ids),
+        remaining_bytes=max_total_bytes - scanned_bytes,
+        window_bytes=window_bytes,
+        max_matches=max_matches_per_evidence,
+    )
+    known_matches += capture_matches
+    scanned_bytes += capture_bytes
+    candidate_public_ids.update(capture_ids)
     ranked: tuple[RankedCandidate, ...] = ()
     if candidate_public_ids:
         ordered_ids = tuple(sorted(candidate_public_ids))

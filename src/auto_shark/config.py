@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -13,6 +13,7 @@ from typing import Optional
 class Settings:
     tshark_path: Optional[Path]
     project_root: Path
+    extra_tshark_dirs: tuple[Path, ...] = field(default_factory=tuple)
     subprocess_timeout_seconds: float = 30.0
     stdout_limit_bytes: int = 16 * 1024 * 1024
     stderr_limit_bytes: int = 256 * 1024
@@ -23,6 +24,11 @@ class Settings:
         local_app_data = Path(values.get("LOCALAPPDATA", Path.home() / ".local" / "share"))
         tshark = values.get("AUTO_SHARK_TSHARK")
         project_root = values.get("AUTO_SHARK_PROJECT_ROOT")
+        extra_dirs = tuple(
+            Path(item).expanduser()
+            for item in values.get("AUTO_SHARK_TSHARK_DIRS", "").split(os.pathsep)
+            if item.strip()
+        )
         return cls(
             tshark_path=Path(tshark).expanduser() if tshark else None,
             project_root=(
@@ -30,4 +36,5 @@ class Settings:
                 if project_root
                 else local_app_data / "AutoShark" / "projects"
             ),
+            extra_tshark_dirs=extra_dirs,
         )

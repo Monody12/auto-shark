@@ -1,4 +1,10 @@
-from auto_shark.search import find_flag_matches, scan_flag_matches
+import pytest
+
+from auto_shark.search import (
+    compile_flag_pattern,
+    find_flag_matches,
+    scan_flag_matches,
+)
 
 
 def test_flag_search_finds_chunk_boundary_match_once(tmp_path) -> None:
@@ -61,3 +67,20 @@ def test_bounded_flag_scan_offsets_are_relative_to_selected_slice(tmp_path) -> N
     path.write_bytes(b"prefixflag{slice}")
     result = scan_flag_matches(path, start_offset=6, max_bytes=11, max_matches=2, chunk_size=4)
     assert [(item.offset, item.value) for item in result.matches] == [(0, b"flag{slice}")]
+
+
+def test_custom_flag_format_matches_challenge_specific_prefix(tmp_path) -> None:
+    path = tmp_path / "evidence.bin"
+    path.write_bytes(b"nothing standard here SUCTF{cu5t0m-answer-42} tail")
+
+    builtin = scan_flag_matches(path, max_bytes=200, max_matches=10, chunk_size=16)
+    assert builtin.matches == ()
+
+    pattern = compile_flag_pattern(r"SUCTF\{[ -~]{1,128}\}")
+    custom = scan_flag_matches(path, max_bytes=200, max_matches=10, chunk_size=16, pattern=pattern)
+    assert [item.value for item in custom.matches] == [b"SUCTF{cu5t0m-answer-42}"]
+
+
+def test_compile_flag_pattern_rejects_invalid_regex() -> None:
+    with pytest.raises(ValueError, match="invalid flag format pattern"):
+        compile_flag_pattern(r"SUCTF{[unclosed")

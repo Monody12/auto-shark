@@ -489,3 +489,186 @@ def triage_icmp(
         routes,
         hints,
     )
+
+
+ICMP_DATA_DETECTOR_VERSION = "icmp-data-stream/v1"
+ICMP_DATA_MAX_FRAMES = 100_000
+ICMP_DATA_MAX_BYTES = 16 * 1024 * 1024
+
+
+@dataclass(frozen=True)
+class IcmpDataSummary:
+    detector_version: str
+    project: str
+    status: str
+    frames: int
+    payload_bytes: int
+    evidence_id: str | None
+    notes: tuple[str, ...]
+
+    def to_json(self) -> str:
+        return json.dumps(asdict(self), ensure_ascii=False, sort_keys=True)
+
+
+def triage_icmp_data(
+    project_path: Path,
+    tshark: Path,
+    *,
+    max_frames: int = ICMP_DATA_MAX_FRAMES,
+    max_bytes: int = ICMP_DATA_MAX_BYTES,
+) -> IcmpDataSummary:
+    """Concatenate ICMP data-layer payloads into one scannable evidence blob.
+
+    Classic CTF pattern: one printable fragment (or its hex/base64 encoding)
+    rides in each ping's payload; concatenated in frame order they form the
+    flag or an encoded stream. The blob is stored as ``icmp-data-stream``
+    evidence so the normal triage/transform stages pick it up.
+    """
+
+    if min(max_frames, max_bytes) <= 0:
+        raise ValueError("ICMP data limits must be positive")
+    project = inspect_project(project_path)
+    capabilities = probe_tshark(tshark)
+    if not capabilities.usable or "data.data" not in capabilities.fields:
+        return IcmpDataSummary(
+            ICMP_DATA_DETECTOR_VERSION,
+            str(project.root),
+            "unavailable",
+            0,
+            0,
+            None,
+            ("TShark does not expose the data.data field.",),
+        )
+    argv = [
+        str(tshark),
+        "-r",
+        str(project.capture_path),
+        "-Y",
+        "icmp && data.data",
+        "-T",
+        "fields",
+        "-E",
+        "separator=/t",
+        "-E",
+        "occurrence=a",
+        "-e",
+        "frame.number",
+        "-e",
+        "data.data",
+    ]
+    frames: list[tuple[int, bytes]] = []
+    truncated = False
+    total = 0
+
+    def consume(line: bytes) -> None:
+        nonlocal truncated, total
+        if not line or len(frames) >= max_frames:
+            if line:
+                truncated = True
+            return
+        parts = line.decode("utf-8", errors="replace").split("\t")
+        if len(parts) < 2 or not parts[1].strip():
+            return
+        try:
+            frame = int(parts[0])
+            payload = bytes.fromhex("".join(parts[1].split(",")))
+        except ValueError:
+            return
+        if total + len(payload) > max_bytes:
+            truncated = True
+            return
+        frames.append((frame, payload))
+        total += len(payload)
+
+    run_streaming_lines(
+        argv,
+        consume,
+        timeout_seconds=300,
+        max_line_bytes=1024 * 1024,
+        stderr_limit=256 * 1024,
+    )
+    if not frames:
+        return IcmpDataSummary(
+            ICMP_DATA_DETECTOR_VERSION, str(project.root), "no-data-payloads", 0, 0, None, ()
+        )
+    from .storage import BlobStore
+
+    concatenated = b"".join(payload for _, payload in frames)
+    store = BlobStore(project.root / "blobs")
+    blob = store.put_bytes(concatenated)
+    relative_path = blob.path.relative_to(project.root).as_posix()
+    offsets = []
+    cursor = 0
+    for frame, payload in frames:
+        offsets.append({"frame": frame, "offset": cursor, "length": len(payload)})
+        cursor += len(payload)
+    evidence_public_id = stable_id(
+        "icmp-data-stream-evidence", {"capture_sha256": project.capture_sha256}
+    )
+    preview = "".join(
+        chr(byte) if 32 <= byte < 127 else "." for byte in concatenated[:256]
+    )
+    locator = {
+        "capture_sha256": project.capture_sha256,
+        "detector": ICMP_DATA_DETECTOR_VERSION,
+        "frames": len(frames),
+        "payload_bytes": len(concatenated),
+        "frame_map": offsets,
+        "truncated": truncated,
+    }
+    database = Database(project.root / "project.sqlite")
+    with database.connect() as connection:
+        capture_id = int(
+            connection.execute(
+                "SELECT id FROM capture WHERE sha256=?", (project.capture_sha256,)
+            ).fetchone()[0]
+        )
+        connection.execute(
+            "INSERT INTO blob(sha256,byte_length,relative_path,media_type,magic_description,"
+            "complete,created_at) VALUES (?,?,?,?,?,1,?) "
+            "ON CONFLICT(sha256) DO NOTHING",
+            (
+                blob.sha256,
+                len(concatenated),
+                relative_path,
+                None,
+                "concatenated ICMP data payloads",
+                _now(),
+            ),
+        )
+        blob_id = int(
+            connection.execute(
+                "SELECT id FROM blob WHERE sha256=?", (blob.sha256,)
+            ).fetchone()[0]
+        )
+        connection.execute(
+            "INSERT INTO evidence(evidence_id,capture_id,source_kind,frame_start,frame_end,"
+            "direction,byte_offset,byte_length,field_name,text_value,blob_id,locator_json) "
+            "VALUES(?,?,'icmp-data-stream',?,?,NULL,0,?,NULL,?,?,?) "
+            "ON CONFLICT(evidence_id) DO UPDATE SET frame_start=excluded.frame_start,"
+            "frame_end=excluded.frame_end,byte_length=excluded.byte_length,"
+            "text_value=excluded.text_value,blob_id=excluded.blob_id,"
+            "locator_json=excluded.locator_json",
+            (
+                evidence_public_id,
+                capture_id,
+                min(frame for frame, _ in frames),
+                max(frame for frame, _ in frames),
+                len(concatenated),
+                preview,
+                blob_id,
+                json.dumps(locator, ensure_ascii=False, sort_keys=True),
+            ),
+        )
+    notes = ["run triage to scan the concatenated payload for candidates"]
+    if truncated:
+        notes.append("input truncated by configured limits")
+    return IcmpDataSummary(
+        ICMP_DATA_DETECTOR_VERSION,
+        str(project.root),
+        "stored" if not truncated else "stored-truncated",
+        len(frames),
+        len(concatenated),
+        evidence_public_id,
+        tuple(notes),
+    )

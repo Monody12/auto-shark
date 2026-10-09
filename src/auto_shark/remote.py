@@ -68,16 +68,22 @@ class RemoteNodeConfig:
     connect_timeout_seconds: int = 15
     strict_host_key_checking: str = "accept-new"
     remote_root: str = DEFAULT_REMOTE_ROOT
+    port: int = 22
+    identity_file: Optional[Path] = None
 
     def validate(self) -> None:
         if not HOST_TOKEN.fullmatch(self.host):
             raise ValueError("remote host must be a plain user@host token")
+        if not 1 <= self.port <= 65535:
+            raise ValueError("remote SSH port must be between 1 and 65535")
         if not 1 <= self.connect_timeout_seconds <= 300:
             raise ValueError("connect timeout must be between 1 and 300 seconds")
         if self.strict_host_key_checking not in ("yes", "accept-new", "no"):
             raise ValueError("unsupported StrictHostKeyChecking mode")
         if not REMOTE_TOKEN.fullmatch(self.remote_root) or ".." in self.remote_root:
             raise ValueError("remote root must be a shell-safe path without ..")
+        if self.identity_file is not None and not self.identity_file.is_file():
+            raise FileNotFoundError(f"SSH identity file not found: {self.identity_file}")
 
 
 class RemoteTransport:
@@ -117,8 +123,8 @@ class SshTransport(RemoteTransport):
             raise FileNotFoundError("ssh and sftp client executables are required")
         self.config = config
 
-    def _options(self) -> list[str]:
-        return [
+    def _common_options(self) -> list[str]:
+        options = [
             "-o",
             "BatchMode=yes",
             "-o",
@@ -126,12 +132,23 @@ class SshTransport(RemoteTransport):
             "-o",
             f"StrictHostKeyChecking={self.config.strict_host_key_checking}",
         ]
+        if self.config.identity_file is not None:
+            options.extend(
+                ["-i", str(self.config.identity_file), "-o", "IdentitiesOnly=yes"]
+            )
+        return options
+
+    def _ssh_options(self) -> list[str]:
+        return ["-p", str(self.config.port), *self._common_options()]
+
+    def _sftp_options(self) -> list[str]:
+        return ["-P", str(self.config.port), *self._common_options()]
 
     def ssh_argv(self, command: Sequence[str]) -> list[str]:
         checked = [_checked_remote_path(str(item)) for item in command]
         return [
             str(self.config.ssh_executable),
-            *self._options(),
+            *self._ssh_options(),
             self.config.host,
             *checked,
         ]
@@ -161,16 +178,18 @@ class SshTransport(RemoteTransport):
     def sftp_batch_text(operations: Sequence[tuple[str, str, str]]) -> str:
         lines = []
         for operation, source, target in operations:
-            _checked_remote_path(target)
             if operation == "get":
                 _checked_remote_path(source)
-            if operation == "put":
+            elif operation == "put":
                 _checked_remote_path(target)
+            else:
+                raise ValueError(f"unsupported sftp operation: {operation}")
             # Pure string replacement: on POSIX hosts a backslash inside a
             # local Windows path is not a separator, so Path.as_posix() would
             # leave it untouched and break the batch line.
             source_posix = str(source).replace("\\", "/")
-            lines.append(f'{operation} "{source_posix}" "{target}"')
+            target_posix = str(target).replace("\\", "/")
+            lines.append(f'{operation} "{source_posix}" "{target_posix}"')
         return "\n".join(lines) + "\n"
 
     def _transfer(self, operations: Sequence[tuple[str, str, str]]) -> None:
@@ -183,7 +202,7 @@ class SshTransport(RemoteTransport):
                 stream.write(self.sftp_batch_text(operations))
             argv = [
                 str(self.config.sftp_executable),
-                *self._options(),
+                *self._sftp_options(),
                 "-b",
                 str(batch_path),
                 self.config.host,
@@ -229,6 +248,7 @@ def probe_remote_node(
     return {
         "schema_version": PROBE_SCHEMA,
         "host": config.host,
+        "port": config.port,
         "remote_root": config.remote_root,
         "probes": probes,
         "available": all(item["available"] for item in probes),

@@ -141,3 +141,81 @@ def test_triage_icmp_does_not_promote_constant_ttl_ping(tmp_path, monkeypatch) -
         assert connection.execute(
             "SELECT count(*) FROM finding WHERE detector='icmp-ttl-oracle'"
         ).fetchone()[0] == 0
+
+
+def test_triage_icmp_data_stores_concatenated_payload_evidence(tmp_path, monkeypatch) -> None:
+    from auto_shark.icmp import triage_icmp_data
+
+    capture = tmp_path / "data.pcap"
+    capture.write_bytes(b"pcap")
+    root = tmp_path / "data.auto-shark"
+    create_project(capture, root, allow_synced=True)
+    capabilities = _capabilities()
+    monkeypatch.setattr(
+        "auto_shark.icmp.probe_tshark",
+        lambda _path: capabilities.__class__(
+            executable="fake-tshark",
+            version_line="TShark test",
+            fields=ICMP_FIELDS + ("data.data",),
+            protocols=("icmp",),
+            export_objects=(),
+            features={},
+            missing_core_fields=(),
+            usable=True,
+            errors=(),
+        ),
+    )
+
+    def fake_run(_argv, on_line, **_kwargs):
+        # One printable fragment per ping, hex-encoded by tshark.
+        on_line(b'1\t666c61677b69636d70')  # "flag{icmp"
+        on_line(b'2\t2d646174617d')  # "-data}"
+        return StreamProcessResult((), 0, 2, b"", False, False, False)
+
+    monkeypatch.setattr("auto_shark.icmp.run_streaming_lines", fake_run)
+    executable = tmp_path / "tshark.exe"
+    executable.write_bytes(b"")
+
+    summary = triage_icmp_data(root, executable)
+
+    assert summary.status == "stored"
+    assert summary.frames == 2
+    assert summary.payload_bytes == len(b"flag{icmp-data}")
+    with Database(root / "project.sqlite").connect() as connection:
+        row = connection.execute(
+            "SELECT e.text_value, b.byte_length FROM evidence e "
+            "JOIN blob b ON b.id=e.blob_id WHERE e.source_kind='icmp-data-stream'"
+        ).fetchone()
+    assert row is not None
+    assert row[0].startswith("flag{icmp-data}")
+    assert row[1] == len(b"flag{icmp-data}")
+
+
+def test_triage_icmp_data_reports_no_payloads(tmp_path, monkeypatch) -> None:
+    from auto_shark.icmp import triage_icmp_data
+
+    capture = tmp_path / "plain.pcap"
+    capture.write_bytes(b"pcap")
+    root = tmp_path / "plain.auto-shark"
+    create_project(capture, root, allow_synced=True)
+    monkeypatch.setattr(
+        "auto_shark.icmp.probe_tshark",
+        lambda _path: _capabilities().__class__(
+            executable="fake-tshark",
+            version_line="TShark test",
+            fields=ICMP_FIELDS + ("data.data",),
+            protocols=("icmp",),
+            export_objects=(),
+            features={},
+            missing_core_fields=(),
+            usable=True,
+            errors=(),
+        ),
+    )
+
+    def fake_run(_argv, on_line, **_kwargs):
+        return StreamProcessResult((), 0, 0, b"", False, False, False)
+
+    monkeypatch.setattr("auto_shark.icmp.run_streaming_lines", fake_run)
+    summary = triage_icmp_data(root, tmp_path / "tshark.exe")
+    assert summary.status == "no-data-payloads"

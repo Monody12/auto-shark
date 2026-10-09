@@ -8,7 +8,9 @@ ROOT = Path(__file__).resolve().parent.parent
 def test_installer_has_stable_upgrade_identity_and_directory() -> None:
     script = (ROOT / "scripts" / "windows_installer.iss").read_text(encoding="utf-8")
     assert "AppId={{F4B24FB8-7432-49E0-A0B6-22D154A555F2}" in script
-    assert "DefaultDirName={localappdata}\\Programs\\Auto-Shark" in script
+    assert "DefaultDirName={autopf}\\Auto-Shark" in script
+    assert "PrivilegesRequired=lowest" in script
+    assert "PrivilegesRequiredOverridesAllowed=dialog" in script
     assert "UsePreviousAppDir=yes" in script
     assert "OutputBaseFilename=AutoShark-Windows-x64-Setup" in script
     assert "{app}\\_internal" in script

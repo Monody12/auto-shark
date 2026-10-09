@@ -189,6 +189,147 @@ def _jpeg_end(stream: BinaryIO, start: int, limit: int) -> Optional[int]:
     return None
 
 
+def _read_vint_bytes(data: bytes, offset: int) -> tuple[int, int]:
+    result = 0
+    shift = 0
+    while offset < len(data):
+        byte = data[offset]
+        offset += 1
+        result |= (byte & 0x7F) << shift
+        if byte & 0x80 == 0:
+            return result, offset
+        shift += 7
+        if shift > 63:
+            break
+    raise ValueError("truncated vint")
+
+
+def _rar5_extra_has_encryption(extra: bytes) -> bool:
+    offset = 0
+    for _ in range(16):
+        if offset >= len(extra):
+            return False
+        try:
+            size, offset = _read_vint_bytes(extra, offset)
+            type_pos = offset
+            record_type, offset = _read_vint_bytes(extra, offset)
+        except ValueError:
+            return False
+        if record_type == 1:
+            return True
+        offset = type_pos + size
+        if offset <= type_pos:
+            return False
+    return False
+
+
+def rar4_is_password_protected(stream: BinaryIO, start: int, end: int) -> bool:
+    """True when a RAR4 archive encrypts headers or a file member."""
+
+    signature = _read_at(stream, start, 7, end)
+    if signature != b"Rar!\x1a\x07\x00":
+        return False
+    cursor = start + 7
+    for _ in range(32):
+        header = _read_at(stream, cursor, 7, end)
+        if len(header) < 7:
+            return False
+        head_type = header[2]
+        flags = int.from_bytes(header[3:5], "little")
+        size = int.from_bytes(header[5:7], "little")
+        if size < 7:
+            return False
+        if head_type == 0x73 and flags & 0x0080:
+            return True
+        if head_type == 0x74 and flags & 0x0004:
+            return True
+        if head_type == 0x7B:
+            return False
+        cursor += size
+        if cursor > end:
+            return False
+    return False
+
+
+def rar5_is_password_protected(stream: BinaryIO, start: int, end: int) -> bool:
+    """True when a RAR5 archive has an encryption header or encrypted file extra."""
+
+    signature = _read_at(stream, start, 8, end)
+    if signature != b"Rar!\x1a\x07\x01\x00":
+        return False
+    window_end = min(end, start + 65_536)
+    data = _read_at(stream, start, window_end - start, end)
+    cursor = 8
+    for _ in range(16):
+        if cursor + 6 > len(data):
+            return False
+        cursor += 4
+        try:
+            header_size, cursor = _read_vint_bytes(data, cursor)
+            type_pos = cursor
+            head_type, cursor = _read_vint_bytes(data, cursor)
+            flags, cursor = _read_vint_bytes(data, cursor)
+            extra = 0
+            data_size = 0
+            if flags & 0x0001:
+                extra, cursor = _read_vint_bytes(data, cursor)
+            if flags & 0x0002:
+                data_size, cursor = _read_vint_bytes(data, cursor)
+        except ValueError:
+            return False
+        header_end = type_pos + header_size
+        if head_type == 4:
+            return True
+        if head_type == 2 and extra > 0:
+            extra_start = header_end - extra
+            if (
+                0 <= extra_start < header_end <= len(data)
+                and _rar5_extra_has_encryption(data[extra_start:header_end])
+            ):
+                return True
+        if head_type == 5:
+            return False
+        cursor = header_end + data_size
+        if cursor > len(data):
+            break
+    return False
+
+
+def rar_is_password_protected(
+    stream: BinaryIO, start: int, end: int, format_name: str
+) -> bool:
+    if format_name == "rar4":
+        return rar4_is_password_protected(stream, start, end)
+    if format_name == "rar5":
+        return rar5_is_password_protected(stream, start, end)
+    return False
+
+
+def zip_is_password_protected(stream: BinaryIO, start: int, end: int) -> bool:
+    """True when a ZIP local-file header has the traditional encryption flag."""
+
+    cursor = start
+    while cursor + 30 <= end:
+        header = _read_at(stream, cursor, 30, end)
+        if len(header) != 30:
+            return False
+        signature = header[:4]
+        if signature == b"PK\x01\x02" or signature == b"PK\x05\x06":
+            return False
+        if signature != b"PK\x03\x04":
+            return False
+        flags = int.from_bytes(header[6:8], "little")
+        if flags & 0x1:
+            return True
+        name_length = int.from_bytes(header[26:28], "little")
+        extra_length = int.from_bytes(header[28:30], "little")
+        compressed = int.from_bytes(header[18:22], "little")
+        cursor += 30 + name_length + extra_length + compressed
+        if flags & 0x8:
+            break
+    return False
+
+
 def _zip_end(stream: BinaryIO, start: int, limit: int) -> Optional[int]:
     if _read_at(stream, start, 4, limit) != b"PK\x03\x04":
         return None
@@ -360,6 +501,13 @@ def discover_file_candidates(
                     continue
                 status = "validated"
                 detail = "structural end validated"
+                if format_name == "zip" and zip_is_password_protected(
+                    stream, start, structural_end
+                ):
+                    detail = (
+                        "ZIP structural end validated; at least one member is "
+                        "password-protected"
+                    )
                 end = structural_end
                 if structural_end - start > max_artifact_bytes:
                     status = "artifact-truncated"
@@ -393,6 +541,10 @@ def discover_file_candidates(
                 "gzip": "GZIP header recognized; compressed data was not inflated",
                 "pe": "DOS and PE signatures recognized; executable was not loaded",
             }[format_name]
+            if format_name in {"rar4", "rar5"} and rar_is_password_protected(
+                stream, start, end, format_name
+            ):
+                detail += "; at least one member is password-protected"
             status = "signature-only"
             if end < min(file_length, scan_limit):
                 status = "artifact-truncated"

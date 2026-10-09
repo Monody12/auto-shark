@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import BinaryIO, Optional
 
 from ..core.ids import EvidenceLocator, evidence_id, stable_id
+from ..pcap_repair import is_pcap_like
 from ..project import inspect_project
 from ..storage import BlobStore, Database
 from .signatures import DiscoveryResult, FileCandidate, discover_file_candidates
@@ -275,10 +276,13 @@ def _persist_carve(
             },
         )
         connection.execute(
-            "INSERT OR IGNORE INTO file_carve "
+            "INSERT INTO file_carve "
             "(carve_id,parent_evidence_id,carved_evidence_id,artifact_id,prefix_evidence_id,"
             "trailing_evidence_id,format,start_offset,byte_length,structural_status,"
-            "validation_detail,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            "validation_detail,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(carve_id) DO UPDATE SET "
+            "validation_detail=excluded.validation_detail,"
+            "structural_status=excluded.structural_status",
             (
                 carve_public_id,
                 parent["evidence_db_id"],
@@ -294,7 +298,168 @@ def _persist_carve(
                 _utc_now(),
             ),
         )
+        if "password-protected" in candidate.validation_detail:
+            finding_public_id = stable_id(
+                "password-protected-archive",
+                {"artifact_id": artifact_public_id},
+            )
+            connection.execute(
+                "INSERT INTO finding(finding_id,detector,detector_version,title,description,"
+                "severity,confidence,recommended_action,created_at) VALUES(?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(finding_id) DO UPDATE SET description=excluded.description,"
+                "recommended_action=excluded.recommended_action",
+                (
+                    finding_public_id,
+                    "password-protected-archive",
+                    "auto-shark.password-protected-archive/v1",
+                    "Password-protected archive",
+                    f"Carved {candidate.format} {candidate.extension} is password-protected. "
+                    "Auto-Shark does not open or brute-force archives.",
+                    "high",
+                    0.9,
+                    "Search the same capture for a password (HTTP, Telnet, FTP, USB keys), "
+                    "then open the archive outside Auto-Shark.",
+                    _utc_now(),
+                ),
+            )
+            finding_db_id = int(
+                connection.execute(
+                    "SELECT id FROM finding WHERE finding_id=?", (finding_public_id,)
+                ).fetchone()[0]
+            )
+            connection.execute(
+                "INSERT OR IGNORE INTO finding_evidence(finding_id,evidence_id,role) "
+                "VALUES(?,?,?)",
+                (finding_db_id, carved_evidence_id, "encrypted-archive"),
+            )
     return candidate.format, is_new_artifact
+
+
+def _ensure_raw_capture_parent(
+    database: Database,
+    project,
+    *,
+    max_scan_bytes: int,
+    max_artifact_bytes: int,
+    max_candidates: int,
+    window_bytes: int,
+) -> None:
+    """Index nested files inside a non-pcap container (MP3/ZIP/JPEG with appended archives)."""
+
+    path = project.capture_path
+    if not path.is_file():
+        return
+    try:
+        head = path.read_bytes()[:64]
+    except OSError:
+        return
+    if is_pcap_like(head):
+        return
+    with database.connect() as connection:
+        existing = connection.execute(
+            "SELECT 1 FROM evidence WHERE source_kind='capture-bytes' LIMIT 1"
+        ).fetchone()
+        if existing is not None:
+            return
+    discovery = discover_file_candidates(
+        path,
+        max_scan_bytes=max_scan_bytes,
+        max_artifact_bytes=max_artifact_bytes,
+        max_candidates=max_candidates,
+        window_bytes=window_bytes,
+    )
+    if not discovery.candidates:
+        return
+    file_length = min(path.stat().st_size, max_scan_bytes)
+    with path.open("rb") as source:
+        artifact_blob = BlobStore(project.root / "blobs").put_stream(
+            _SliceReader(source, 0, file_length)
+        )
+    relative_path = artifact_blob.path.relative_to(project.root).as_posix()
+    locator = EvidenceLocator(
+        capture_sha256=project.capture_sha256,
+        source_kind="capture-bytes",
+        byte_offset=0,
+        byte_length=artifact_blob.byte_length,
+    )
+    public_id = evidence_id(locator)
+    finding_public_id = stable_id(
+        "nested-container",
+        {"capture_sha256": project.capture_sha256, "source": "capture-bytes"},
+    )
+    with database.connect() as connection:
+        capture_id = int(
+            connection.execute(
+                "SELECT id FROM capture WHERE sha256=?", (project.capture_sha256,)
+            ).fetchone()[0]
+        )
+        connection.execute(
+            "INSERT INTO blob (sha256,byte_length,relative_path,complete,created_at) "
+            "VALUES (?,?,?,?,?) ON CONFLICT(sha256) DO UPDATE SET "
+            "complete=max(blob.complete, excluded.complete)",
+            (
+                artifact_blob.sha256,
+                artifact_blob.byte_length,
+                relative_path,
+                1,
+                _utc_now(),
+            ),
+        )
+        blob_id = int(
+            connection.execute(
+                "SELECT id FROM blob WHERE sha256=?", (artifact_blob.sha256,)
+            ).fetchone()[0]
+        )
+        connection.execute(
+            "INSERT OR IGNORE INTO evidence "
+            "(evidence_id,capture_id,source_kind,byte_offset,byte_length,blob_id,locator_json) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (
+                public_id,
+                capture_id,
+                "capture-bytes",
+                0,
+                artifact_blob.byte_length,
+                blob_id,
+                json.dumps(locator.payload(), ensure_ascii=False, sort_keys=True),
+            ),
+        )
+        evidence_db_id = int(
+            connection.execute(
+                "SELECT id FROM evidence WHERE evidence_id=?", (public_id,)
+            ).fetchone()[0]
+        )
+        formats = sorted({candidate.format for candidate in discovery.candidates})
+        connection.execute(
+            "INSERT INTO finding(finding_id,detector,detector_version,title,description,"
+            "severity,confidence,recommended_action,created_at) VALUES(?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(finding_id) DO UPDATE SET description=excluded.description,"
+            "recommended_action=excluded.recommended_action",
+            (
+                finding_public_id,
+                "nested-container",
+                "auto-shark.nested-container/v1",
+                "Not a packet capture; nested files inside",
+                "The opened file is not a pcap/pcapng. Auto-Shark carved nested "
+                + ", ".join(formats)
+                + " object(s) onto the Files page and did not unpack archives.",
+                "high",
+                0.85,
+                "Open the carved zip/rar/images from the Files page outside Auto-Shark. "
+                "Encrypted archives need a password found in the same challenge.",
+                _utc_now(),
+            ),
+        )
+        finding_db_id = int(
+            connection.execute(
+                "SELECT id FROM finding WHERE finding_id=?", (finding_public_id,)
+            ).fetchone()[0]
+        )
+        connection.execute(
+            "INSERT OR IGNORE INTO finding_evidence(finding_id,evidence_id,role) "
+            "VALUES(?,?,?)",
+            (finding_db_id, evidence_db_id, "container-file"),
+        )
 
 
 def carve_project(
@@ -318,6 +483,14 @@ def carve_project(
     project = inspect_project(project_path)
     database = Database(project.root / "project.sqlite")
     database.initialize()
+    _ensure_raw_capture_parent(
+        database,
+        project,
+        max_scan_bytes=max_scan_bytes,
+        max_artifact_bytes=max_artifact_bytes,
+        max_candidates=max_candidates_per_evidence,
+        window_bytes=window_bytes,
+    )
     with database.connect() as connection:
         evidence_rows = connection.execute(
             "SELECT e.id AS evidence_db_id,e.evidence_id AS evidence_public_id,e.capture_id,"
@@ -325,7 +498,7 @@ def carve_project(
             "e.byte_offset,e.byte_length,e.blob_id,b.relative_path,b.byte_length AS blob_length "
             "FROM evidence e JOIN blob b ON b.id=e.blob_id "
             "WHERE (e.source_kind IN "
-            "('http-body','transform-output','ftp-data','tftp-data') "
+            "('http-body','transform-output','ftp-data','tftp-data','capture-bytes') "
             "OR (e.source_kind='tcp-stream' AND EXISTS ("
             "SELECT 1 FROM tcp_reconstruction tr WHERE tr.evidence_id=e.id))) "
             "AND coalesce(e.byte_offset,0)=0 AND e.byte_length=b.byte_length "

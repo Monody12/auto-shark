@@ -1,3 +1,5 @@
+import io
+import zipfile
 from datetime import datetime, timezone
 
 from auto_shark.core.ids import EvidenceLocator, evidence_id
@@ -96,3 +98,30 @@ def test_carve_is_idempotent_and_preserves_duplicate_sources(tmp_path) -> None:
         ).fetchall()
         assert len(ranges) == 6
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+def test_carve_indexes_nested_archives_in_non_pcap_container(tmp_path) -> None:
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w") as output:
+        output.writestr("inner.txt", "secret")
+    payload = b"ID3\x03\x00\x00\x00\x00\x00\x00" + b"\x00" * 64 + archive.getvalue()
+    capture = tmp_path / "song.mp3"
+    capture.write_bytes(payload)
+    project = tmp_path / "song.auto-shark"
+    create_project(capture, project)
+
+    summary = carve_project(project)
+    assert "zip" in summary.formats
+    assert summary.carved_files >= 1
+    database = Database(project / "project.sqlite")
+    with database.connect() as connection:
+        finding = connection.execute(
+            "SELECT title FROM finding WHERE detector='nested-container'"
+        ).fetchone()
+        assert finding is not None
+        assert "nested" in finding[0].lower()
+        kinds = [
+            row[0]
+            for row in connection.execute("SELECT source_kind FROM evidence")
+        ]
+        assert "capture-bytes" in kinds

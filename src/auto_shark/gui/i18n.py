@@ -25,9 +25,128 @@ _ZH: dict[str, str] = {
     "E&xit": "退出(&X)",
     "&Settings…": "设置(&S)…",
     "&Run full analysis": "运行完整分析(&R)",
+    "&Re-run full analysis": "重新运行完整分析(&R)",
+    "Drop a .pcap / .pcapng file here to analyze it": (
+        "把 .pcap / .pcapng 文件拖到这里，立即开始分析"
+    ),
+    "…or use File > Open capture. Analysis starts automatically.": (
+        "…也可以用“文件 > 打开抓包”。分析会自动开始。"
+    ),
+    "TShark ready: ": "TShark 就绪：",
+    "TShark was not found — install Wireshark or set the path in Settings.": (
+        "未找到 TShark——请安装 Wireshark，或在“设置”中指定路径。"
+    ),
+    "Overview": "解题向导",
+    "Files": "文件",
+    "Flag format (regex):": "Flag 格式（正则）：",
+    "Rescan": "重新扫描",
+    "Search everywhere:": "全局搜索：",
+    "keyword, e.g. flag / password / PK": "关键字，如 flag / password / PK",
+    "Search": "搜索",
+    "Search results": "搜索结果",
+    "matches": "命中",
+    "blobs scanned": "已扫描数据块",
+    "Variant": "变体",
+    "Offset": "偏移",
+    "Context": "上下文",
+    "Protocol hierarchy: ": "协议分级：",
+    "Challenge types:": "题型判定：",
+    "Type": "题型",
+    "Evidence": "证据",
+    "Suggestion": "建议",
+    "Next steps:": "下一步：",
+    "Exam points:": "考点：",
+    "Operation log:": "操作记录：",
+    "Technical details": "技术细节",
+    "How to use": "怎么用",
+    "&Help": "帮助(&H)",
+    "&How to use": "怎么用(&H)",
+    "Export analysis bundle…": "导出分析包…",
+
+    "Name": "名称",
+    "Media type": "媒体类型",
+    "Magic": "文件头",
+    "Bytes": "字节",
+    "SHA-256": "SHA-256",
+    "Stream": "流",
+    "Frames": "帧范围",
+    "Flag": "Flag",
+    "Exam point": "考点",
+    "What to look at": "看哪里",
+    "Next action": "建议",
+    "What happened": "发生了什么",
+    "known-flag": "已知 Flag 格式",
+    "sensitive-field": "敏感字段",
+    "unknown-token": "疑似 Flag",
+    "credential": "凭据",
+    "SQL injection": "SQL 注入",
+    "WebShell": "WebShell",
+    "USB keyboard": "USB 键盘",
+    "HTTP status/body mismatch": "HTTP 状态/正文矛盾",
+    "Typed keys:": "键盘输入：",
+    "HTTP error status contradicts response body": "HTTP 错误状态与响应正文矛盾",
+    "Static WebShell activity": "静态 WebShell 行为",
+    "USB HID boot-keyboard-like endpoint": "USB HID 键盘端点",
+    "Password-protected archive": "加密压缩包",
+    "Repaired zeroed PCAP global header": "已修复被清空的 PCAP 文件头",
+    "Not a packet capture; nested files inside": "这不是抓包文件，里面嵌套了压缩包/图片",
+    (
+        "Search the same capture for a password (HTTP, Telnet, FTP, USB keys), "
+        "then open the archive outside Auto-Shark."
+    ): "先在同一份流量里找密码（HTTP / Telnet / FTP / USB 按键），再在 Auto-Shark 外打开压缩包。",
+    (
+        "Continue on the repaired copy. The HTTP body in this challenge pattern "
+        "often carries the flag after the header is restored."
+    ): "继续看修复后的副本。这类题的 HTTP 正文里经常直接带着 flag。",
+    (
+        "Open the carved zip/rar/images from the Files page outside Auto-Shark. "
+        "Encrypted archives need a password found in the same challenge."
+    ): "到“文件”页导出嵌套的 zip/rar/图片，在 Auto-Shark 外打开。加密包要先在同一题里找到密码。",
+    "Review the finding evidence links.": "到发现页查看该条证据。",
+    (
+        "Follow the operation timeline: uploads, directory listings, "
+        "file writes/reads, and encoded command traffic."
+    ): "按操作记录看上传、列目录、读写文件和编码命令。",
+    "Review key-down/release edges and correlate held keys with other USB devices.": (
+        "把按键序列拼起来；Shift 会把 [ ] - 变成 { } _。"
+    ),
+    "Reconstruct TFTP uploads and downloads": "重建 TFTP 上传和下载",
+    "Reconstruct and inspect generic TCP data streams": "重建并检查通用 TCP 数据流",
+    "Inspect ICMP echo side channels and printable TTL oracles": (
+        "检查 ICMP 回显隐蔽信道和可打印 TTL 旁路"
+    ),
+    "file-write": "写文件",
+    "file-read": "读文件",
+    "command-exec": "命令执行",
+    "Flag candidates (double-click to copy):": "Flag 候选（双击复制）：",
+    "No challenge type recognized yet. Standard checklist:": (
+        "暂未识别出题型，按通用五步清单排查："
+    ),
+    "Open in Explorer": "在资源管理器中打开",
+    "View content": "查看内容",
+    "View request body": "查看请求内容",
+    "View response body": "查看响应内容",
+    "Select a file first.": "请先选择一个文件。",
+    "Select a row first.": "请先选择一行。",
+    "Copied: ": "已复制：",
+    "error: file missing": "错误：文件不存在",
+    "No stored body for this message (absent or not extracted).": (
+        "该报文没有已存储的正文（缺失或未提取）。"
+    ),
+    "No stored stream content (run tcp-text/telnet stages first).": (
+        "该流没有已存储的内容（请先运行 tcp-text / telnet 阶段）。"
+    ),
+    "No Telnet preview stored (run the telnet stage first).": (
+        "没有 Telnet 预览（请先运行 telnet 阶段）。"
+    ),
+    "No extracted files yet. They appear after the scan stage "
+    "(run the full analysis first).": (
+        "暂无提取文件。文件会在 scan 阶段（完整分析）后出现在这里。"
+    ),
+    "Re-rank candidates with the new flag format": "用新的 flag 格式重新排列候选",
+    "Re-run detectors": "重新运行检测器",
     "&Cancel running analysis": "取消正在运行的分析(&C)",
     "&Refresh page": "刷新页面(&F)",
-    "Overview": "概览",
     "HTTP": "HTTP",
     "Streams": "TCP 流",
     "Telnet": "Telnet",
@@ -66,13 +185,72 @@ _ZH: dict[str, str] = {
     "Auto-Shark export": "Auto-Shark 导出",
     "Browse…": "浏览…",
     "Probe": "探测",
+    "Check": "检测",
+    "Check result": "检测结果",
+    "Usable: yes": "可用：是",
+    "Usable: no": "可用：否",
+    "Capabilities:": "能力：",
+    "Click Check after choosing tshark.exe. Need Wireshark 4.0 or newer.": (
+        "选好 tshark.exe 后点“检测”。需要 Wireshark 4.0 或更高版本。"
+    ),
+    (
+        "Local CTF analysis only needs TShark (it comes with Wireshark 4). "
+        "The remote Linux node is an optional extra for image/stego tools; "
+        "ordinary traffic challenges do not use it."
+    ): (
+        "本地做流量题只需要 TShark（Wireshark 4 自带）。"
+        "下面的远程 Linux 节点是给图片隐写等额外工具用的，普通流量题不用填。"
+    ),
+    "Show advanced: remote Linux node (optional)": "显示高级选项：远程 Linux 节点（可选）",
+    (
+        "Optional Linux helper for extra tools (zsteg, binwalk, …). "
+        "Local traffic challenges do not need this. Protocol is SSH + SFTP only. "
+        "Host is user@IP or user@domain, for example ctf@192.168.1.10. "
+        "Port defaults to 22. Passwords are not supported — use an OpenSSH "
+        "private key or ssh-agent. Probe tests the connection; saving only "
+        "stores the settings. Main analysis still runs locally with TShark."
+    ): (
+        "这是可选的 Linux 增强节点，用来跑 zsteg / binwalk 等额外工具。"
+        "本地流量题不用填。协议只有 SSH + SFTP。"
+        "主机填 user@IP 或 user@域名，例如 ctf@192.168.1.10。"
+        "端口默认 22。不支持密码登录，请用 OpenSSH 私钥或 ssh-agent。"
+        "点“探测远程节点”测试连通；保存只是记下设置。主分析仍在本地用 TShark。"
+    ),
+    "SSH user@host": "SSH 用户@主机",
+    "SSH port": "SSH 端口",
+    "SSH private key": "SSH 私钥",
+    "Optional private key; empty uses ssh-agent / default keys": (
+        "可选私钥；留空则使用 ssh-agent 或默认密钥"
+    ),
+    "Leave empty to auto-detect OpenSSH": "留空则自动检测 OpenSSH",
+    "Choose SSH private key": "选择 SSH 私钥",
+    (
+        "This TShark is too old (found {found}, need ≥ 4.0). "
+        "Install Wireshark 4, or in Settings choose the tshark.exe from a portable "
+        "Wireshark 4."
+    ): (
+        "这个 tshark 版本过低（当前 {found}，需要 ≥ 4.0）。"
+        "请安装 Wireshark 4，或在设置中选择便携版里的 tshark.exe。"
+    ),
     "Probe remote node": "探测远程节点",
     "Probe result": "探测结果",
     "TShark executable": "TShark 可执行文件",
     "Legacy TLS RSA private key (optional)": "旧版 TLS RSA 私钥（可选）",
+    "TLS keylog file (optional)": "TLS keylog 文件（可选）",
+    "Choose TLS keylog file": "选择 TLS keylog 文件",
+    "Cannot load TLS keylog file: ": "无法加载 TLS keylog 文件：",
+    "Auto-detected TLS keylog: ": "自动检测到 TLS keylog：",
     "Choose TLS RSA private key": "选择 TLS RSA 私钥",
     "Cannot load TLS RSA private key: ": "无法加载 TLS RSA 私钥：",
     "Recover SMTP messages and MIME attachments": "恢复 SMTP 邮件和 MIME 附件",
+    "Index directional Telnet dialogues": "索引 Telnet 双向对话",
+    "Analysis finished.": "分析完成。",
+    "Analysis finished; the following stages were skipped:\n": (
+        "分析完成，以下阶段被跳过：\n"
+    ),
+    "Skipped stages do not block the remaining results.": (
+        "被跳过的阶段不影响其余分析结果。"
+    ),
     "Remote host (optional)": "远程主机（可选）",
     "ssh executable": "ssh 可执行文件",
     "sftp executable": "sftp 可执行文件",
@@ -195,6 +373,28 @@ _ZH: dict[str, str] = {
     "Triage USB HID input report series": "分析 USB HID 输入报告序列",
     "Reconstruct supported RTP audio and preserve VoIP hints": (
         "重建受支持的 RTP 音频并保留 VoIP 线索"
+    ),
+    "How to use Auto-Shark": "怎么用 Auto-Shark",
+    (
+        "1. Drag a .pcap / .pcapng onto the window (or File > Open capture). "
+        "Analysis starts automatically.\n"
+        "2. Read the solve wizard: protocol mix, challenge type, and flag "
+        "candidates. Double-click a suggestion to jump to the evidence.\n"
+        "3. Double-click a flag candidate to copy it. If the contest uses a "
+        "custom wrapper, enter that regex and press Rescan.\n"
+        "4. Files lists exported objects. HTTP and TCP streams follow the "
+        "conversation. Telnet appears only when that traffic exists.\n"
+        "5. Findings lists flags, exam points, and the reconstructed "
+        "operation log. Tick Technical details for the raw JSON.\n"
+        "Search everywhere is the strings | grep replacement "
+        "(plain text, hex, and Base64)."
+    ): (
+        "1. 把 .pcap / .pcapng 拖进窗口（或用“文件 > 打开抓包”）。分析会自动开始。\n"
+        "2. 先看解题向导：协议构成、题型判定、Flag 候选。双击一条建议即可跳到证据。\n"
+        "3. 双击 Flag 候选即可复制。比赛若有自定义外壳，填入正则后点“重新扫描”。\n"
+        "4. “文件”是导出对象；HTTP / TCP 流用来跟会话。只有出现 Telnet 流量时才会显示该页。\n"
+        "5. “发现”列出 Flag、考点和还原出的操作记录。需要原始 JSON 时再勾选“技术细节”。\n"
+        "“全局搜索”相当于 strings | grep，同时覆盖明文、十六进制和 Base64。"
     ),
 }
 

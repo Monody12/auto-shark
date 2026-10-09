@@ -15,11 +15,18 @@ from .body import extract_http_body
 from .config import Settings
 from .detectors import detect_project
 from .dns import triage_dns_tunnels
-from .engines.tshark import find_tshark, load_tls_rsa_key, probe_tshark
+from .engines.tshark import (
+    find_tls_keylog,
+    find_tshark,
+    load_tls_keylog,
+    load_tls_rsa_key,
+    probe_tshark,
+)
 from .exporting import ExportLimits, export_bundle
 from .files.carve import carve_project
 from .ftp import index_ftp
-from .icmp import triage_icmp
+from .grep import grep_project
+from .icmp import triage_icmp, triage_icmp_data
 from .image_analysis import analyze_project_images
 from .inventory import index_summary
 from .investigation import add_note, query_notes, set_review_mark, update_note
@@ -27,7 +34,7 @@ from .m4_queries import query_findings, query_timeline
 from .manual_queue import rebuild_manual_queue, update_manual_task_state
 from .pipeline import scan_project
 from .plugins import probe_plugin, run_plugin
-from .project import create_project, inspect_project
+from .project import create_project, inspect_project, read_flag_format, write_flag_format
 from .queries import (
     query_manual_queue,
     query_streams,
@@ -45,6 +52,7 @@ from .remote import (
 )
 from .reporting import ReportLimits, collect_report
 from .smtp import extract_smtp_messages
+from .snmp_strings import triage_snmp_strings
 from .tcp import reconstruct_tcp_stream
 from .tcp_text import triage_tcp_text
 from .tcp_urgent import triage_tcp_urgent
@@ -114,6 +122,12 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         help="challenge-provided private key for compatible legacy RSA TLS sessions",
     )
+    analyze.add_argument(
+        "--tls-keylog",
+        type=Path,
+        help="NSS keylog file for TLS decryption (auto-detected next to the capture "
+        "when named ssl_keys.log and similar)",
+    )
     analyze.add_argument("--uri", help="also count transactions with this exact request URI")
     analyze.add_argument("--with-bodies", action="store_true")
     analyze.add_argument("--scan", action="store_true", help="scan bodies after extraction")
@@ -182,6 +196,10 @@ def _parser() -> argparse.ArgumentParser:
 
     triage = commands.add_parser("triage", help="rank bounded current evidence")
     triage.add_argument("project", type=Path)
+    triage.add_argument(
+        "--flag-format",
+        help="regex fragment for this challenge's flag, e.g. 'SUCTF\{[^}]{1,128}\}'",
+    )
     triage.add_argument("--max-evidence", type=int, default=10_000)
     triage.add_argument("--max-evidence-bytes", type=int, default=64 * 1024 * 1024)
     triage.add_argument("--max-total-bytes", type=int, default=256 * 1024 * 1024)
@@ -189,6 +207,25 @@ def _parser() -> argparse.ArgumentParser:
     triage.add_argument("--max-candidates", type=int, default=1024)
     triage.add_argument("--max-field-bytes", type=int, default=4096)
     triage.add_argument("--window-bytes", type=int, default=1024 * 1024)
+
+    snmp_cmd = commands.add_parser(
+        "snmp-triage", help="concatenate SNMP variable-binding strings for scanning"
+    )
+    snmp_cmd.add_argument("project", type=Path)
+    snmp_cmd.add_argument("--tshark", type=Path, help="explicit path to tshark executable")
+
+    grep_cmd = commands.add_parser(
+        "grep", help="search every stored blob raw/hex/base64 for a needle"
+    )
+    grep_cmd.add_argument("project", type=Path)
+    grep_cmd.add_argument("needle")
+    grep_cmd.add_argument("--max-matches", type=int, default=200)
+
+    flag_format_cmd = commands.add_parser(
+        "flag-format", help="show or set this challenge's flag format pattern"
+    )
+    flag_format_cmd.add_argument("project", type=Path)
+    flag_format_cmd.add_argument("--set", dest="pattern", help="regex fragment to store")
 
     detect = commands.add_parser("detect", help="run bounded explainable CTF detectors")
     detect.add_argument("project", type=Path)
@@ -444,10 +481,12 @@ def _parser() -> argparse.ArgumentParser:
     remote_probe = commands.add_parser(
         "remote-probe", help="probe a Linux analysis node over constrained SSH"
     )
-    remote_probe.add_argument("--host", required=True)
+    remote_probe.add_argument("--host", required=True, help="user@host (IP or domain)")
     remote_probe.add_argument(
         "--path", action="append", required=True, help="absolute remote executable path"
     )
+    remote_probe.add_argument("--port", type=int, default=22, help="SSH port (default 22)")
+    remote_probe.add_argument("--identity", type=Path, help="OpenSSH private key file")
     remote_probe.add_argument("--ssh", type=Path)
     remote_probe.add_argument("--sftp", type=Path)
     remote_probe.add_argument("--connect-timeout", type=int, default=15)
@@ -456,7 +495,9 @@ def _parser() -> argparse.ArgumentParser:
     remote_run.add_argument("project", type=Path)
     remote_run.add_argument("manifest", type=Path)
     remote_run.add_argument("--artifact", required=True)
-    remote_run.add_argument("--host", required=True)
+    remote_run.add_argument("--host", required=True, help="user@host (IP or domain)")
+    remote_run.add_argument("--port", type=int, default=22, help="SSH port (default 22)")
+    remote_run.add_argument("--identity", type=Path, help="OpenSSH private key file")
     remote_run.add_argument("--ssh", type=Path)
     remote_run.add_argument("--sftp", type=Path)
     remote_run.add_argument("--remote-root", default=".auto-shark-jobs")
@@ -464,7 +505,9 @@ def _parser() -> argparse.ArgumentParser:
     remote_setup = commands.add_parser(
         "remote-setup", help="upload the cwd adapter to a Linux node once"
     )
-    remote_setup.add_argument("--host", required=True)
+    remote_setup.add_argument("--host", required=True, help="user@host (IP or domain)")
+    remote_setup.add_argument("--port", type=int, default=22, help="SSH port (default 22)")
+    remote_setup.add_argument("--identity", type=Path, help="OpenSSH private key file")
     remote_setup.add_argument("--ssh", type=Path)
     remote_setup.add_argument("--sftp", type=Path)
     remote_setup.add_argument("--remote-root", default=".auto-shark-jobs")
@@ -476,7 +519,9 @@ def _parser() -> argparse.ArgumentParser:
     image_analyze.add_argument("manifest", type=Path)
     image_analyze.add_argument("--max-artifacts", type=int, default=32)
     image_analyze.add_argument("--remote", action="store_true", help="run on the Linux node")
-    image_analyze.add_argument("--host")
+    image_analyze.add_argument("--host", help="user@host (IP or domain)")
+    image_analyze.add_argument("--port", type=int, default=22, help="SSH port (default 22)")
+    image_analyze.add_argument("--identity", type=Path, help="OpenSSH private key file")
     image_analyze.add_argument("--ssh", type=Path)
     image_analyze.add_argument("--sftp", type=Path)
     image_analyze.add_argument("--remote-root", default=".auto-shark-jobs")
@@ -541,6 +586,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     ssh_executable=ssh,
                     sftp_executable=sftp,
                     connect_timeout_seconds=args.connect_timeout,
+                    port=args.port,
+                    identity_file=args.identity,
                 ),
                 args.path,
             )
@@ -561,6 +608,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                                 ssh_executable=ssh,
                                 sftp_executable=sftp,
                                 remote_root=args.remote_root,
+                                port=args.port,
+                                identity_file=args.identity,
                             )
                         ),
                         args.manifest,
@@ -585,6 +634,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     ssh_executable=ssh,
                     sftp_executable=sftp,
                     remote_root=args.remote_root,
+                    port=args.port,
+                    identity_file=args.identity,
                 )
             )
             print(json.dumps(result, ensure_ascii=False, sort_keys=True, indent=2))
@@ -600,6 +651,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     ssh_executable=args.ssh,
                     sftp_executable=args.sftp,
                     remote_root=args.remote_root,
+                    remote_port=args.port,
+                    identity_file=args.identity,
                     max_artifacts=args.max_artifacts,
                 ).to_json(),
                 end="",
@@ -840,8 +893,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 max_routes=args.max_routes,
                 max_preview_attempts=args.max_preview_attempts,
             )
+            data_summary = triage_icmp_data(args.project, executable)
             rebuild_manual_queue(args.project)
             print(summary.to_json(), end="")
+            if data_summary.status.startswith("stored"):
+                print(data_summary.to_json(), end="")
             return 0
         if args.command == "tcp-urgent":
             settings = Settings.from_environment()
@@ -984,10 +1040,41 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             rebuild_manual_queue(args.project)
             print(summary.to_json(), end="")
             return 0
+        if args.command == "snmp-triage":
+            settings = Settings.from_environment()
+            executable = find_tshark(args.tshark or settings.tshark_path)
+            if executable is None:
+                print(
+                    "TShark was not found. Use --tshark or AUTO_SHARK_TSHARK.",
+                    file=sys.stderr,
+                )
+                return 2
+            summary = triage_snmp_strings(args.project, executable)
+            rebuild_manual_queue(args.project)
+            print(summary.to_json(), end="")
+            return 0
+        if args.command == "grep":
+            print(json.dumps(grep_project(args.project, args.needle,
+                                          max_matches=args.max_matches),
+                             ensure_ascii=False, sort_keys=True))
+            return 0
+        if args.command == "flag-format":
+            if args.pattern is not None:
+                write_flag_format(args.project, args.pattern)
+            current = read_flag_format(args.project)
+            if current:
+                print(current)
+            else:
+                print("no flag format configured", file=sys.stderr)
+                return 1
+            return 0
         if args.command == "triage":
+            if getattr(args, "flag_format", None):
+                write_flag_format(args.project, args.flag_format)
             print(
                 triage_project(
                     args.project,
+                    flag_pattern=getattr(args, "flag_format", None),
                     max_evidence=args.max_evidence,
                     max_evidence_bytes=args.max_evidence_bytes,
                     max_total_bytes=args.max_total_bytes,
@@ -1130,6 +1217,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             if args.scan and not args.with_bodies:
                 raise ValueError("--scan requires --with-bodies")
             tls_rsa_key = load_tls_rsa_key(args.tls_rsa_key) if args.tls_rsa_key else None
+            tls_keylog = (
+                load_tls_keylog(args.tls_keylog)
+                if args.tls_keylog
+                else find_tls_keylog(args.capture)
+            )
+            if tls_keylog is not None:
+                print(
+                    f"using TLS keylog: {tls_keylog.path.name} "
+                    f"(sha256 {tls_keylog.sha256[:16]}…, {tls_keylog.byte_length} bytes)",
+                    file=sys.stderr,
+                )
             if args.with_bodies:
                 result = analyze_with_bodies(
                     args.capture,
@@ -1140,6 +1238,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     max_total_bytes=args.max_body_total,
                     run_scan=args.scan,
                     tls_rsa_key=tls_rsa_key,
+                    tls_keylog=tls_keylog,
                 )
             else:
                 result = analyze_http(
@@ -1148,6 +1247,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     executable,
                     matching_uri=args.uri,
                     tls_rsa_key=tls_rsa_key,
+                    tls_keylog=tls_keylog,
                 )
             if args.with_bodies:
                 print(result.to_json(verbose_bodies=args.verbose_bodies))

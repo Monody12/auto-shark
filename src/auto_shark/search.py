@@ -5,11 +5,12 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 FLAG_PATTERN = re.compile(
     rb"(?i:(?<![A-Za-z0-9_])(?:flag|ctf|key|answer)\{[^{}\r\n]{1,256}\}"
     rb"|\{(?:flag|ctf|key|answer)[:=][^{}\r\n]{1,256}\}"
-    rb"|(?<![A-Za-z0-9_])(?:flag|ctf|key|answer)[:=]"
+    rb"|(?<![A-Za-z0-9_])(?:flag|ctf|key|answer)(?:[:=]|[ \t\r\n]+is[ \t\r\n]+)"
     rb"[A-Za-z0-9][A-Za-z0-9_.+/-]{7,255}(?![A-Za-z0-9_.+/-]))"
 )
 CSS_DECLARATION = re.compile(
@@ -19,12 +20,39 @@ CSS_DECLARATION = re.compile(
 MAX_MATCH_BYTES = 290
 
 
+def compile_flag_pattern(extra_pattern: Optional[str] = None) -> re.Pattern[bytes]:
+    """Combine the built-in flag pattern with a user-declared format.
+
+    ``extra_pattern`` is a regex fragment such as ``SUCTF\\{[^}]{1,128}\\}``;
+    challenges declare their own flag format, so a literal translation of
+    the description ("flag is XXX{...}") must beat the generic default.
+    """
+
+    if not extra_pattern:
+        return FLAG_PATTERN
+    try:
+        extra = re.compile(extra_pattern.encode("utf-8"), re.IGNORECASE)
+    except re.error as error:
+        raise ValueError(f"invalid flag format pattern: {error}") from error
+    combined = (
+        rb"(?:" + FLAG_PATTERN.pattern + rb")|(?:" + extra.pattern + rb")"
+    )
+    return re.compile(combined, re.IGNORECASE)
+
+
 def _plausible_flag(value: bytes) -> bool:
     if value.startswith(b"{"):
         return True
     if b"{" not in value:
-        delimiter = b":" if b":" in value else b"="
-        token = value.split(delimiter, 1)[1]
+        lowered = value.lower()
+        if b":" in value:
+            token = value.split(b":", 1)[1]
+        elif b"=" in value:
+            token = value.split(b"=", 1)[1]
+        elif b" is " in lowered:
+            token = value[lowered.index(b" is ") + 4 :]
+        else:
+            token = value
         return any(chr(byte).isalpha() for byte in token) and any(
             chr(byte).isdigit() for byte in token
         )
@@ -53,11 +81,18 @@ def scan_flag_matches(
     max_bytes: int,
     max_matches: int,
     chunk_size: int = 1024 * 1024,
+    pattern: Optional[re.Pattern[bytes]] = None,
 ) -> FlagScanResult:
     if start_offset < 0:
         raise ValueError("start offset cannot be negative")
     if min(max_bytes, max_matches, chunk_size) <= 0:
         raise ValueError("scan limits must be positive")
+    matcher = pattern if pattern is not None else FLAG_PATTERN
+    # A user-declared format is explicit intent: skip the generic heuristics
+    # (plausibility filters tuned for the built-in flag/ctf/key prefixes).
+    # compile_flag_pattern() returns the shared FLAG_PATTERN object when no
+    # user pattern exists, so identity still enables the strict filters.
+    strict_plausibility = pattern is None or pattern is FLAG_PATTERN
     matches: list[ByteMatch] = []
     carry = b""
     scanned = 0
@@ -76,11 +111,13 @@ def scan_flag_matches(
             carry_length = len(carry)
             base_offset = scanned - carry_length
             at_file_end = start_offset + scanned + len(chunk) >= file_length
-            for match in FLAG_PATTERN.finditer(combined):
+            for match in matcher.finditer(combined):
                 value = match.group()
                 if b"{" not in value and match.end() == len(combined) and not at_file_end:
                     continue
-                if match.end() > carry_length and _plausible_flag(value):
+                if match.end() > carry_length and (
+                    not strict_plausibility or _plausible_flag(value)
+                ):
                     matches.append(ByteMatch(base_offset + match.start(), value))
                     if len(matches) >= max_matches:
                         candidate_limited = True

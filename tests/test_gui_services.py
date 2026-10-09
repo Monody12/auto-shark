@@ -131,20 +131,24 @@ def test_services_export_and_stages(tmp_path) -> None:
     assert (tmp_path / "bundle" / "manifest.json").is_file()
 
     stages = services.analysis_stages(Path("tshark.exe"))
+    # The fixture project has no indexed transactions and its stored capture
+    # file still exists, so the base analysis is re-queued automatically.
     assert [stage.key for stage in stages] == [
+        "analyze",
         "ftp",
         "tftp",
         "smtp",
         "scan",
-        "triage",
-        "detect",
         "inventory",
         "tcp-text",
+        "telnet",
         "dns",
         "icmp",
         "tcp-urgent",
         "usb-hid",
         "voip",
+        "triage",
+        "detect",
     ]
     with_capture = services.analysis_stages(Path("tshark.exe"), capture=Path("cap.pcap"))
     assert [stage.key for stage in with_capture] == [
@@ -153,15 +157,16 @@ def test_services_export_and_stages(tmp_path) -> None:
         "tftp",
         "smtp",
         "scan",
-        "triage",
-        "detect",
         "inventory",
         "tcp-text",
+        "telnet",
         "dns",
         "icmp",
         "tcp-urgent",
         "usb-hid",
         "voip",
+        "triage",
+        "detect",
     ]
     scan_summary = with_capture[4].run()
     assert hasattr(scan_summary, "to_json")
@@ -187,9 +192,15 @@ def test_gui_analysis_stage_forwards_tls_rsa_key(tmp_path, monkeypatch) -> None:
     assert received["tls_rsa_key"] is key
 
 
-def test_stage_dataclass_and_tshark_resolution(tmp_path) -> None:
+def test_stage_dataclass_and_tshark_resolution(tmp_path, monkeypatch) -> None:
     stage = AnalysisStage("key", "title", lambda: "done")
     assert stage.run() == "done"
+    # Isolate discovery from the host machine: with every lookup source
+    # emptied, an invalid explicit path must resolve to None.
+    monkeypatch.delenv("AUTO_SHARK_TSHARK", raising=False)
+    monkeypatch.setattr("auto_shark.engines.tshark._default_search_dirs", lambda: [])
+    monkeypatch.setattr("auto_shark.engines.tshark._registry_install_dirs", lambda: [])
+    monkeypatch.setattr("auto_shark.engines.tshark.shutil.which", lambda _name: None)
     assert resolve_tshark(Path("Z:/definitely-missing-tshark.exe")) is None
     root = tmp_path / "fresh.auto-shark"
     capture = tmp_path / "cap.pcap"
@@ -205,12 +216,28 @@ def test_gui_ftp_stage_skips_tshark_without_required_fields(tmp_path, monkeypatc
         lambda _path: SimpleNamespace(features={"ftp": False}),
     )
 
-    result = ProjectServices(root).analysis_stages(Path("tshark.exe"))[0].run()
+    stages = ProjectServices(root).analysis_stages(Path("tshark.exe"))
+    result = next(stage for stage in stages if stage.key == "ftp").run()
 
     assert result == {
         "status": "unavailable",
         "reason": "TShark lacks the required FTP/FTP-DATA fields",
     }
+
+
+def test_gui_stage_failure_degrades_to_recorded_skip(tmp_path, monkeypatch) -> None:
+    root = _services_project(tmp_path)
+
+    def broken(*_args, **_kwargs):
+        raise ValueError("scanner exploded")
+
+    monkeypatch.setattr("auto_shark.gui.services.scan_project", broken)
+    stages = ProjectServices(root).analysis_stages(Path("tshark.exe"))
+    result = next(stage for stage in stages if stage.key == "scan").run()
+
+    assert result["status"] == "failed"
+    assert result["stage"] == "scan"
+    assert "scanner exploded" in result["reason"]
 
 
 def test_gui_specialized_stages_refresh_manual_queue(tmp_path, monkeypatch) -> None:
