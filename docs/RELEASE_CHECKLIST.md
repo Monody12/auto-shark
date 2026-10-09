@@ -42,14 +42,14 @@ Status legend: [x] verified with recorded evidence, [ ] pending execution.
       `test_windows_release.py`).
 - [x] Tag workflow `.github/workflows/release.yml` still requires both
       Windows packages, wheel, sdist, and `SHA256SUMS`.
-- [ ] GitHub Actions `v0.4.0` run builds Setup.exe, Portable.zip, wheel,
+- [x] GitHub Actions `v0.4.0` run builds Setup.exe, Portable.zip, wheel,
       sdist, and `SHA256SUMS`.
 
 ## Published release
 
-- [ ] Main commit and annotated `v0.4.0` tag are pushed.
-- [ ] Tag-triggered GitHub Actions release workflow completes successfully.
-- [ ] GitHub Release v0.4.0 exposes installer, portable ZIP, wheel, sdist, and
+- [x] Main commit and annotated `v0.4.0` tag are pushed.
+- [x] Tag-triggered GitHub Actions release workflow completes successfully.
+- [x] GitHub Release v0.4.0 exposes installer, portable ZIP, wheel, sdist, and
       `SHA256SUMS`.
 
 ## Clean-machine install test (run once before announcing)

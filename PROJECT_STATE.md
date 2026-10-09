@@ -34,6 +34,10 @@ portable TShark 4.6.7):
 - Live Linux node (machine-local, not committed): `remote-probe` with
   default keys and with `--identity`, `remote-setup` (`ok: true`), and
   `remote-run` (`status: completed`, result JSON fetched).
+- GitHub Release v0.4.0:
+  https://github.com/Monody12/auto-shark/releases/tag/v0.4.0
+  (Setup.exe, Portable.zip, wheel, sdist, SHA256SUMS). Workflow
+  https://github.com/Monody12/auto-shark/actions/runs/37895023282 success.
 
 Player-first smoke from the previous slice is unchanged (see below).
 
@@ -44,9 +48,9 @@ Active risks / remaining player work (do not bake oracles into code):
 3. Encrypted zip/rar are surfaced, never brute-forced.
 4. Do not bundle tshark.exe (GPL).
 
-Single next executable step: after `v0.4.0` is pushed, confirm the GitHub
-Actions release published Setup.exe, Portable.zip, wheel, sdist, and
-SHA256SUMS.
+Single next executable step: bounded boolean-blind reconstruction for
+HTTP SQL-injection captures (`blind_injection`), then re-smoke that
+challenge. v0.4.0 is published.
 
 ## Previous checkpoint (2026-10-09) — settings/tables + remaining Notion traffic
 
