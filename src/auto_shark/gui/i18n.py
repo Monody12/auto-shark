@@ -38,6 +38,44 @@ _ZH: dict[str, str] = {
     ),
     "Overview": "解题向导",
     "Files": "文件",
+    "Frames": "流量",
+    "Statistics": "统计",
+    "Protocol hierarchy": "协议分级",
+    "Conversations": "会话",
+    "HTTP statistics": "HTTP 统计",
+    "DNS query names": "DNS 查询名",
+    "Sorted by bytes. Double-click to filter the Frames page by stream.": (
+        "按字节数降序。双击行可在流量页按该流筛选。"
+    ),
+    "Status codes:": "状态码分布：",
+    "Top request URIs:": "请求 URI Top：",
+    "Display filter syntax": "显示筛选语法",
+    "Click a row to insert and run the filter.": "点击行即可填入并执行筛选。",
+    "Statistics ready.": "统计就绪。",
+    "协议": "协议",
+    "contains 搜索": "contains 搜索",
+    "字段匹配": "字段匹配",
+    "流跟踪": "流跟踪",
+    "逻辑组合": "逻辑组合",
+    "Display filter:": "显示筛选：",
+    "Apply": "应用",
+    "Clear": "清除",
+    "Quick:": "速查：",
+    "Follow TCP stream": "追踪 TCP 流",
+    "Follow UDP stream": "追踪 UDP 流",
+    "No.": "序号",
+    "Time": "时间",
+    "Source": "源",
+    "Destination": "目的",
+    "Protocol": "协议",
+    "Length": "长度",
+    "Info": "信息",
+    "This frame has no {proto} stream index.": "该帧没有 {proto} 流编号。",
+    "Index packet list columns for the traffic page": "为流量页索引分组列表列",
+    "No packet rows yet — they appear after the frames stage "
+    "(run the full analysis).": (
+        "暂无分组行——frames 阶段（完整分析）后出现在这里。"
+    ),
     "Flag format (regex):": "Flag 格式（正则）：",
     "Rescan": "重新扫描",
     "Search everywhere:": "全局搜索：",
@@ -69,7 +107,7 @@ _ZH: dict[str, str] = {
     "Bytes": "字节",
     "SHA-256": "SHA-256",
     "Stream": "流",
-    "Frames": "帧范围",
+    "Frame range": "帧范围",
     "Flag": "Flag",
     "Exam point": "考点",
     "What to look at": "看哪里",
@@ -160,7 +198,6 @@ _ZH: dict[str, str] = {
     "Report JSON (bounded preview of report/v1):": "报告 JSON（report/v1 的有界预览）：",
     "URI filter:": "URI 过滤：",
     "exact URI or empty": "精确 URI，留空表示不过滤",
-    "Apply": "应用",
     "Previous": "上一页",
     "Next": "下一页",
     "Previous candidates": "上一页候选",
@@ -245,6 +282,18 @@ _ZH: dict[str, str] = {
     "Recover SMTP messages and MIME attachments": "恢复 SMTP 邮件和 MIME 附件",
     "Index directional Telnet dialogues": "索引 Telnet 双向对话",
     "Analysis finished.": "分析完成。",
+    "No automatic hits on this capture. Open the Frames page to browse "
+    "every packet and filter manually (e.g. http, dns, usb, "
+    'tcp contains "flag").': (
+        "本次抓包没有自动命中。打开“流量”页浏览全部分组并手动筛选"
+        "（如 http、dns、usb、tcp contains \"flag\"）。"
+    ),
+    "This is not a capture file. Nested challenges (mp3/png/zip hiding "
+    "a pcap) need file carving first — extract the inner .pcap/.pcapng "
+    "(binwalk/foremost or a hex editor) and open that.": (
+        "这不是抓包文件。嵌套题（mp3/图片/压缩包里藏 pcap）需要先做文件分离——"
+        "用 binwalk/foremost 或十六进制编辑器取出内层 .pcap/.pcapng 再打开。"
+    ),
     "Analysis finished; the following stages were skipped:\n": (
         "分析完成，以下阶段被跳过：\n"
     ),
@@ -285,7 +334,6 @@ _ZH: dict[str, str] = {
     "Status": "状态",
     "Code": "状态码",
     "Parameter": "参数",
-    "Source": "来源",
     "Conversation": "会话",
     "Endpoints": "端点",
     "Direction": "方向",

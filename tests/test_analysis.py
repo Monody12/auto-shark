@@ -49,3 +49,17 @@ def test_open_or_create_rejects_project_belonging_to_other_capture(tmp_path) -> 
     second.write_bytes(b"second-bytes")
     with pytest.raises(ValueError, match="different capture"):
         open_or_create_project(second, project_dir)
+
+
+def test_corrupt_capture_hint_appends_pcapfix_advice(tmp_path) -> None:
+    from auto_shark.analysis import _corrupt_capture_hint
+
+    broken = tmp_path / "broken.pcap"
+    broken.write_bytes(b"not a pcap header at all")
+    hint = _corrupt_capture_hint(broken, "tshark: the capture file appears to be damaged")
+    assert "pcapfix" in hint
+
+    good = tmp_path / "good.pcapng"
+    good.write_bytes(bytes((0x0A, 0x0D, 0x0D, 0x0A)) + b"rest")
+    clean = _corrupt_capture_hint(good, "some unrelated tshark error")
+    assert clean == ""

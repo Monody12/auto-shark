@@ -24,6 +24,7 @@ USB_HID_FIELDS = (
     "usb.dst",
     "usb.endpoint_address",
     "usb.capdata",
+    "usbhid.data",
 )
 USB_HID_REQUIRED_FIELDS = frozenset(USB_HID_FIELDS)
 DETECTOR = "usb-hid-triage"
@@ -124,9 +125,10 @@ def parse_usb_hid_line(line: bytes) -> UsbReport:
     if len(rows) != 1 or len(rows[0]) != len(USB_HID_FIELDS):
         raise ValueError("invalid USB HID field row")
     values = dict(zip(USB_HID_FIELDS, rows[0]))
-    if not values["frame.number"] or not values["usb.src"] or not values["usb.capdata"]:
+    data_value = values["usb.capdata"] or values.get("usbhid.data") or ""
+    if not values["frame.number"] or not values["usb.src"] or not data_value:
         raise ValueError("USB HID row lacks frame, source, or capture data")
-    raw = values["usb.capdata"].replace(":", "")
+    raw = data_value.replace(":", "")
     return UsbReport(
         int(values["frame.number"]),
         values["usb.src"],
@@ -142,7 +144,7 @@ def tshark_usb_hid_arguments(executable: Path, capture: Path) -> list[str]:
         "-r",
         str(capture),
         "-Y",
-        "usb.capdata",
+        "usb.capdata || usbhid.data",
         "-T",
         "fields",
         "-E",
@@ -266,6 +268,7 @@ def _persist_endpoint(
     capture_id: int,
     capture_sha256: str,
     reports: list[UsbReport],
+    project_root=None,
 ) -> UsbEndpointResult:
     first = min(item.frame for item in reports)
     last = max(item.frame for item in reports)
@@ -323,6 +326,67 @@ def _persist_endpoint(
                 "SELECT id FROM evidence WHERE evidence_id=?", (evidence_public_id,)
             ).fetchone()[0]
         )
+        keystroke_evidence_db_id = evidence_db_id
+        if typed and len(typed) >= 4 and project_root is not None:
+            # Typed text is evidence, not only a flag-shaped subset: passwords
+            # and commands typed on a captured keyboard (e.g. BugKu
+            # whereiskey) must surface even without a flag{} wrapper.
+            from .storage import BlobStore
+
+            store = BlobStore(project_root / "blobs")
+            blob = store.put_bytes(typed.encode("utf-8"))
+            relative_path = blob.path.relative_to(project_root).as_posix()
+            keystroke_public_id = stable_id(
+                "usb-keystrokes-evidence", dict(identity, typed=typed)
+            )
+            connection.execute(
+                "INSERT INTO blob(sha256,byte_length,relative_path,media_type,"
+                "magic_description,complete,created_at) VALUES (?,?,?,?,?,1,?) "
+                "ON CONFLICT(sha256) DO NOTHING",
+                (blob.sha256, len(typed), relative_path, None,
+                 "reconstructed USB keyboard input", _now()),
+            )
+            keystroke_blob_id = int(
+                connection.execute(
+                    "SELECT id FROM blob WHERE sha256=?", (blob.sha256,)
+                ).fetchone()[0]
+            )
+            connection.execute(
+                "INSERT INTO evidence(evidence_id,capture_id,source_kind,frame_start,"
+                "frame_end,direction,byte_offset,byte_length,field_name,text_value,"
+                "blob_id,locator_json) VALUES(?,?,'usb-keystrokes',?,?,NULL,0,?,NULL,?,?,?) "
+                "ON CONFLICT(evidence_id) DO UPDATE SET text_value=excluded.text_value,"
+                "blob_id=excluded.blob_id,locator_json=excluded.locator_json",
+                (keystroke_public_id, capture_id, first, last, len(typed), typed,
+                 keystroke_blob_id,
+                 json.dumps({"typed_string": typed, "source": reports[0].source},
+                            ensure_ascii=False, sort_keys=True)),
+            )
+            keystroke_evidence_db_id = int(
+                connection.execute(
+                    "SELECT id FROM evidence WHERE evidence_id=?",
+                    (keystroke_public_id,),
+                ).fetchone()[0]
+            )
+            typed_public_id = candidate_id("usb-keystrokes", typed.strip())
+            connection.execute(
+                "INSERT INTO candidate(candidate_id,kind,raw_value,normalized_value,"
+                "confidence,rank_score,created_at) VALUES(?,?,?,?,?,?,?) "
+                "ON CONFLICT(candidate_id) DO UPDATE SET "
+                "confidence=max(candidate.confidence,excluded.confidence),"
+                "rank_score=max(candidate.rank_score,excluded.rank_score)",
+                (typed_public_id, "usb-keystrokes", typed, typed.strip(), 0.8, 78.0, _now()),
+            )
+            typed_candidate_db_id = int(
+                connection.execute(
+                    "SELECT id FROM candidate WHERE candidate_id=?", (typed_public_id,)
+                ).fetchone()[0]
+            )
+            connection.execute(
+                "INSERT OR IGNORE INTO candidate_evidence(candidate_id,evidence_id,role) "
+                "VALUES(?,?,?)",
+                (typed_candidate_db_id, keystroke_evidence_db_id, "usb-typed-keys"),
+            )
         if classification != "unclassified":
             finding_public_id = stable_id("usb-hid-endpoint-finding", identity)
             if classification == "boot-keyboard-like":
@@ -372,7 +436,7 @@ def _persist_endpoint(
                 (finding_db_id, evidence_db_id, "usb-report-series"),
             )
             if typed:
-                _persist_typed_flag(connection, evidence_db_id, typed)
+                _persist_typed_flag(connection, keystroke_evidence_db_id, typed)
     return UsbEndpointResult(
         reports[0].source,
         reports[0].endpoint,
@@ -400,6 +464,11 @@ def triage_usb_hid(
     project = inspect_project(project_path)
     capabilities = probe_tshark(tshark)
     missing = USB_HID_REQUIRED_FIELDS - set(capabilities.fields)
+    if "usb.capdata" in missing and "usbhid.data" in capabilities.fields:
+        # USBPcap flows dissected as usbhid expose usbhid.data instead of
+        # usb.capdata (e.g. BugKu whereiskey); either carries the reports.
+        missing.discard("usb.capdata")
+        missing = frozenset(missing)
     if not capabilities.usable or missing:
         return UsbHidSummary(
             DETECTOR_VERSION,
@@ -505,7 +574,9 @@ def triage_usb_hid(
             ).fetchone()[0]
         )
     endpoints = tuple(
-        _persist_endpoint(database, capture_id, project.capture_sha256, reports)
+        _persist_endpoint(
+            database, capture_id, project.capture_sha256, reports, project.root
+        )
         for reports in sorted(groups.values(), key=lambda items: min(item.frame for item in items))
     )
     keyboard = [item for item in endpoints if item.classification == "boot-keyboard-like"]

@@ -20,6 +20,7 @@ class GuiSettings:
     remote_root: str = ".auto-shark-jobs"
     recent_captures: list[str] = field(default_factory=list)
     flag_format: str = ""
+    filter_history: list[str] = field(default_factory=list)
 
     def remember_capture(self, path: Path) -> None:
         entry = str(Path(path).resolve())
@@ -27,6 +28,14 @@ class GuiSettings:
             item for item in self.recent_captures if Path(item).resolve() != Path(entry).resolve()
         ]
         self.recent_captures = entries[:10]
+
+    def remember_filter(self, text: str) -> None:
+        entry = text.strip()
+        if not entry:
+            return
+        self.filter_history = [entry] + [
+            item for item in self.filter_history if item != entry
+        ][:19]
 
 
 def settings_path() -> Path:

@@ -290,6 +290,33 @@ def _summary(
     )
 
 
+
+_PCAP_MAGICS = (
+    bytes((0xD4, 0xC3, 0xB2, 0xA1)),
+    bytes((0xA1, 0xB2, 0xC3, 0xD4)),
+    bytes((0x4D, 0x3C, 0xB2, 0xA1)),
+    bytes((0x0A, 0x0D, 0x0D, 0x0A)),
+    bytes((0x34, 0x43, 0x50, 0x41)),
+    bytes((0x53, 0x4E, 0x41, 0x50)),
+)
+
+
+def _corrupt_capture_hint(capture: Path, detail: str) -> str:
+    """Append a pcapfix suggestion when the capture looks damaged."""
+
+    lowered = detail.lower()
+    damaged_words = ("damaged", "corrupt", "truncated", "appear", "unreadable")
+    try:
+        head = capture.open("rb").read(4)
+    except OSError:
+        head = b""
+    if head in _PCAP_MAGICS and not any(word in lowered for word in damaged_words):
+        return ""
+    return (
+        " The capture file may be damaged or not a pcap/pcapng; "
+        "try repairing it with pcapfix and retry."
+    )
+
 def open_or_create_project(capture: Path, project: Path) -> ProjectInfo:
     """Idempotent project access for re-analysis runs.
 
@@ -396,7 +423,9 @@ def analyze_http(
             if result.returncode != 0:
                 detail = result.stderr.decode("utf-8", errors="replace").strip()
                 raise ValueError(
-                    f"TShark HTTP extraction exited {result.returncode}: {detail[:500]}"
+                    f"TShark HTTP extraction exited {result.returncode}: "
+                    f"{detail[:500]}"
+                    f"{_corrupt_capture_hint(project_info.capture_path, detail)}"
                 )
             _pair_http(connection, capture_db_id, project_info.capture_sha256)
         status = "completed"

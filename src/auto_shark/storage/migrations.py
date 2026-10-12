@@ -1183,4 +1183,22 @@ MIGRATIONS = (
     CREATE INDEX IF NOT EXISTS idx_smtp_attachment_message
         ON smtp_attachment(smtp_message_id, ordinal);
     """,
+    """
+    CREATE TABLE IF NOT EXISTS frame_column (
+        capture_id INTEGER NOT NULL REFERENCES capture(id) ON DELETE CASCADE,
+        frame_number INTEGER NOT NULL,
+        time_epoch REAL NOT NULL,
+        src TEXT,
+        dst TEXT,
+        protocol TEXT,
+        info TEXT,
+        frame_len INTEGER NOT NULL CHECK (frame_len >= 0),
+        tcp_stream INTEGER,
+        udp_stream INTEGER,
+        PRIMARY KEY (capture_id, frame_number)
+    ) WITHOUT ROWID;
+
+    CREATE INDEX IF NOT EXISTS idx_frame_column_stream
+        ON frame_column(capture_id, tcp_stream);
+    """,
 )

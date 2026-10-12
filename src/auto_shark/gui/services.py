@@ -17,8 +17,10 @@ from typing import Optional
 from ..config import Settings
 from ..detectors import detect_project
 from ..dns import triage_dns_tunnels
+from ..engines.process import run_bounded
 from ..engines.tshark import TlsKeylog, TlsRsaKey, find_tshark, probe_tshark
 from ..exporting import ExportLimits, export_bundle
+from ..frames import extract_frame_columns
 from ..ftp import index_ftp
 from ..grep import grep_project
 from ..icmp import triage_icmp, triage_icmp_data
@@ -209,6 +211,329 @@ class ProjectServices:
                 export_limits=ExportLimits(include_evidence=include_evidence),
             )
         )
+
+    # --------------------------------------------------------- statistics page
+
+    def statistics(self) -> dict:
+        """Protocol hierarchy, conversations, and HTTP aggregates (SQL only)."""
+
+        project = inspect_project(self.root)
+        database = Database(project.root / "project.sqlite")
+        with database.connect() as connection:
+            capture_id = int(
+                connection.execute(
+                    "SELECT id FROM capture WHERE sha256=?", (project.capture_sha256,)
+                ).fetchone()[0]
+            )
+            protocols = [
+                dict(row)
+                for row in connection.execute(
+                    "SELECT protocol_label, frame_count, first_frame, last_frame "
+                    "FROM protocol_observation WHERE capture_id=? "
+                    "ORDER BY frame_count DESC LIMIT 200",
+                    (capture_id,),
+                )
+            ]
+            conversations = [
+                dict(row)
+                for row in connection.execute(
+                    "SELECT protocol, stream_index, endpoint_a, endpoint_b, "
+                    "frame_count, captured_bytes, first_time, last_time "
+                    "FROM conversation_profile WHERE capture_id=? "
+                    "ORDER BY captured_bytes DESC LIMIT 500",
+                    (capture_id,),
+                )
+            ]
+            status_codes = [
+                {"code": row["code"], "count": row["c"]}
+                for row in connection.execute(
+                    "SELECT hm.response_code code, count(*) c FROM http_message hm "
+                    "JOIN protocol_message pm ON pm.id=hm.protocol_message_id "
+                    "WHERE pm.capture_id=? AND hm.response_code IS NOT NULL "
+                    "GROUP BY code ORDER BY c DESC LIMIT 30",
+                    (capture_id,),
+                )
+            ]
+            top_uris = [
+                {"uri": row["uri"], "count": row["c"]}
+                for row in connection.execute(
+                    "SELECT COALESCE(hm.host,'') || hm.uri uri, count(*) c "
+                    "FROM http_message hm "
+                    "JOIN protocol_message pm ON pm.id=hm.protocol_message_id "
+                    "WHERE pm.capture_id=? AND hm.method IS NOT NULL "
+                    "GROUP BY uri ORDER BY c DESC LIMIT 100",
+                    (capture_id,),
+                )
+            ]
+        return {
+            "schema_version": "auto-shark.statistics/v1",
+            "protocols": protocols,
+            "conversations": conversations,
+            "status_codes": status_codes,
+            "top_uris": top_uris,
+        }
+
+    _DNS_NAME_CAP = 5000
+
+    def dns_names(self) -> list:
+        """First-seen unique DNS query names (manual exfil review)."""
+
+        project = inspect_project(self.root)
+        tshark = resolve_tshark(None)
+        if tshark is None:
+            raise ValueError("TShark was not found for DNS listing")
+        result = run_bounded(
+            [
+                str(tshark),
+                "-r",
+                str(project.capture_path),
+                "-Y",
+                "dns.flags.response == 0",
+                "-T",
+                "fields",
+                "-E",
+                "separator=/t",
+                "-e",
+                "frame.number",
+                "-e",
+                "dns.qry.name",
+            ],
+            timeout_seconds=120,
+            stdout_limit=8 * 1024 * 1024,
+            stderr_limit=64 * 1024,
+        )
+        if result.returncode != 0:
+            raise ValueError("DNS query listing failed")
+        seen: dict = {}
+        for line in result.stdout.decode("utf-8", errors="replace").splitlines():
+            parts = line.split("\t")
+            if len(parts) < 2 or not parts[1].strip():
+                continue
+            frame = int(parts[0]) if parts[0].strip().isdigit() else None
+            for name in parts[1].split(","):
+                name = name.strip()
+                if name and name not in seen:
+                    seen[name] = frame
+                    if len(seen) >= self._DNS_NAME_CAP:
+                        return [
+                            {"name": key, "first_frame": value}
+                            for key, value in seen.items()
+                        ]
+        return [{"name": key, "first_frame": value} for key, value in seen.items()]
+
+    # ------------------------------------------------------------ frames page
+
+    _FILTER_FRAME_CAP = 20_000
+
+    def frames_stage(self, tshark: Path):
+        """Stage wrapper: populate the packet-list columns."""
+
+        return extract_frame_columns(self.root, tshark)
+
+    def frames(
+        self, *, offset: int = 0, limit: int = PAGE_LIMIT, filter_text: str = ""
+    ) -> dict:
+        """Page of packet rows; an optional tshark display filter narrows first."""
+
+        project = inspect_project(self.root)
+        tshark = resolve_tshark(None)
+        numbers: Optional[list] = None
+        if filter_text.strip():
+            if tshark is None:
+                raise ValueError("TShark was not found for display filtering")
+            result = run_bounded(
+                [
+                    str(tshark),
+                    "-r",
+                    str(project.capture_path),
+                    "-Y",
+                    filter_text.strip(),
+                    "-T",
+                    "fields",
+                    "-e",
+                    "frame.number",
+                ],
+                timeout_seconds=120,
+                stdout_limit=8 * 1024 * 1024,
+                stderr_limit=64 * 1024,
+            )
+            if result.returncode != 0:
+                detail = result.stderr.decode("utf-8", errors="replace").strip()
+                raise ValueError(detail.splitlines()[-1] if detail else "filter failed")
+            numbers = []
+            for line in result.stdout.decode("utf-8", errors="replace").splitlines():
+                line = line.strip()
+                if line.isdigit():
+                    numbers.append(int(line))
+                    if len(numbers) >= self._FILTER_FRAME_CAP:
+                        break
+        database = Database(project.root / "project.sqlite")
+        with database.connect() as connection:
+            capture_id = int(
+                connection.execute(
+                    "SELECT id FROM capture WHERE sha256=?", (project.capture_sha256,)
+                ).fetchone()[0]
+            )
+            where = "WHERE capture_id=?"
+            params: list = [capture_id]
+            if numbers is not None:
+                if not numbers:
+                    return {"items": [], "total": 0, "offset": offset, "filter": filter_text}
+                where += f" AND frame_number IN ({','.join('?' for _ in numbers)})"
+                params += numbers
+            total = int(
+                connection.execute(
+                    f"SELECT count(*) FROM frame_column {where}", params
+                ).fetchone()[0]
+            )
+            time_base = connection.execute(
+                f"SELECT MIN(time_epoch) FROM frame_column {where}", params
+            ).fetchone()[0]
+            has_tcp = (
+                connection.execute(
+                    "SELECT 1 FROM frame_column WHERE capture_id=? AND tcp_stream "
+                    "IS NOT NULL LIMIT 1",
+                    (capture_id,),
+                ).fetchone()
+                is not None
+            )
+            has_udp = (
+                connection.execute(
+                    "SELECT 1 FROM frame_column WHERE capture_id=? AND udp_stream "
+                    "IS NOT NULL LIMIT 1",
+                    (capture_id,),
+                ).fetchone()
+                is not None
+            )
+            rows = connection.execute(
+                f"SELECT frame_number,time_epoch,src,dst,protocol,info,frame_len,"
+                f"tcp_stream,udp_stream FROM frame_column {where} "
+                f"ORDER BY frame_number LIMIT ? OFFSET ?",
+                [*params, limit, offset],
+            ).fetchall()
+        items = [
+            {
+                "frame": row["frame_number"],
+                "time": round(row["time_epoch"], 6),
+                "src": row["src"],
+                "dst": row["dst"],
+                "protocol": row["protocol"],
+                "info": row["info"],
+                "length": row["frame_len"],
+                "tcp_stream": row["tcp_stream"],
+                "udp_stream": row["udp_stream"],
+            }
+            for row in rows
+        ]
+        return {
+            "items": items,
+            "total": total,
+            "offset": offset,
+            "filter": filter_text,
+            "time_base": time_base,
+            "has_tcp": has_tcp,
+            "has_udp": has_udp,
+        }
+
+    def follow_stream(self, proto: str, stream_index: int) -> dict:
+        """Reconstruct one TCP/UDP stream on demand, split by direction.
+
+        ``proto="http"`` follows the same TCP stream (Wireshark's Follow
+        HTTP Stream carries the identical bytes).
+        """
+
+        project = inspect_project(self.root)
+        tshark = resolve_tshark(None)
+        if tshark is None:
+            raise ValueError("TShark was not found for stream following")
+        wire_proto = "tcp" if proto in ("tcp", "http") else "udp"
+        field = f"{wire_proto}.stream"
+        result = run_bounded(
+            [
+                str(tshark),
+                "-r",
+                str(project.capture_path),
+                "-Y",
+                f"{field} == {int(stream_index)}",
+                "-T",
+                "fields",
+                "-E",
+                "separator=/t",
+                "-E",
+                "occurrence=f",
+                "-e",
+                "frame.number",
+                "-e",
+                "ip.src",
+                "-e",
+                f"{wire_proto}.srcport",
+                "-e",
+                f"{wire_proto}.payload",
+            ],
+            timeout_seconds=120,
+            stdout_limit=32 * 1024 * 1024,
+            stderr_limit=64 * 1024,
+        )
+        if result.returncode != 0:
+            detail = result.stderr.decode("utf-8", errors="replace").strip()
+            raise ValueError(detail.splitlines()[-1] if detail else "follow failed")
+        client_key = None
+        directions: dict = {}
+        first_frame = last_frame = None
+        for line in result.stdout.decode("utf-8", errors="replace").splitlines():
+            parts = line.split("\t")
+            if len(parts) < 4:
+                continue
+            frame_text, src, payload = parts[0], parts[1], parts[3]
+            if frame_text.isdigit():
+                frame = int(frame_text)
+                first_frame = frame if first_frame is None else min(first_frame, frame)
+                last_frame = frame if last_frame is None else max(last_frame, frame)
+            key = src
+            if client_key is None and payload.strip():
+                client_key = key
+            bucket = directions.setdefault(key, bytearray())
+            for chunk in payload.replace(":", "").split(","):
+                chunk = chunk.strip()
+                if not chunk:
+                    continue
+                try:
+                    bucket += bytes.fromhex(chunk)
+                except ValueError:
+                    continue
+        client = bytes(directions.pop(client_key, bytearray())) if client_key else b""
+        server = b"".join(bytes(value) for value in directions.values())
+        return {
+            "client": client,
+            "server": server,
+            "frames": [first_frame, last_frame],
+            "stream": stream_index,
+            "proto": proto,
+        }
+
+    def frame_detail(self, frame_number: int) -> str:
+        """Verbose dissection text for one frame (single-frame tshark -V)."""
+
+        project = inspect_project(self.root)
+        tshark = resolve_tshark(None)
+        if tshark is None:
+            raise ValueError("TShark was not found for frame detail")
+        result = run_bounded(
+            [
+                str(tshark),
+                "-r",
+                str(project.capture_path),
+                "-Y",
+                f"frame.number == {int(frame_number)}",
+                "-V",
+            ],
+            timeout_seconds=60,
+            stdout_limit=2 * 1024 * 1024,
+            stderr_limit=64 * 1024,
+        )
+        if result.returncode != 0:
+            raise ValueError("frame dissection failed")
+        return result.stdout.decode("utf-8", errors="replace")
 
     # ------------------------------------------------------------- wizard/files
 
@@ -521,6 +846,11 @@ class ProjectServices:
                     "inventory",
                     "Build capture summary and manual queue",
                     guarded("inventory", lambda: index_summary(self.root, tshark)),
+                ),
+                AnalysisStage(
+                    "frames",
+                    "Index packet list columns for the traffic page",
+                    guarded("frames", lambda: extract_frame_columns(self.root, tshark)),
                 ),
                 AnalysisStage(
                     "tcp-text",

@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
+    QTabWidget,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -56,6 +57,8 @@ from .workers import SingleRunWorker, StageWorker
 CORE_PAGES = (
     "Overview",
     "Files",
+    "Frames",
+    "Statistics",
     "HTTP",
     "Streams",
     "Findings",
@@ -145,7 +148,14 @@ class MainWindow(QMainWindow):
         self._timeline_items: list = []
         self._queue_items: list = []
         self._language = detect_language()
-        self.setWindowTitle("Auto-Shark")
+        try:
+            from importlib.metadata import PackageNotFoundError, version
+
+            app_version = version("auto-shark")
+        except PackageNotFoundError:  # pragma: no cover - source-tree runs
+            app_version = "dev"
+        self._app_version = app_version
+        self.setWindowTitle(f"Auto-Shark v{app_version}")
         self.resize(1280, 820)
         self.setAcceptDrops(True)
         self._build_menu()
@@ -228,6 +238,8 @@ class MainWindow(QMainWindow):
         builders: dict[str, Callable[[], QWidget]] = {
             "Overview": self._build_overview_page,
             "Files": self._build_files_page,
+            "Frames": self._build_frames_page,
+            "Statistics": self._build_statistics_page,
             "HTTP": self._build_http_page,
             "Streams": self._build_streams_page,
             "Telnet": self._build_telnet_page,
@@ -403,6 +415,151 @@ class MainWindow(QMainWindow):
         path = Path(item.text())
         if path.is_file():
             self.open_capture_file(path)
+
+    # -------------------------------------------------------- statistics page
+
+    def _build_statistics_page(self) -> QWidget:
+        body = QWidget()
+        layout = QVBoxLayout(body)
+        tabs = QTabWidget()
+
+        proto_tab = QWidget()
+        proto_layout = QVBoxLayout(proto_tab)
+        self._stats_protocol_table = _table(
+            ("Protocol", "Frames", "Share", "First", "Last")
+        )
+        proto_layout.addWidget(self._stats_protocol_table)
+        tabs.addTab(proto_tab, self._t("Protocol hierarchy"))
+
+        conv_tab = QWidget()
+        conv_layout = QVBoxLayout(conv_tab)
+        conv_hint = QLabel(
+            self._t(
+                "Sorted by bytes. Double-click to filter the Frames page by stream."
+            )
+        )
+        conv_hint.setWordWrap(True)
+        conv_layout.addWidget(conv_hint)
+        self._stats_conversation_table = _table(
+            ("Proto", "Stream", "Endpoint A", "Endpoint B", "Frames", "Bytes", "Duration")
+        )
+        self._stats_conversation_table.itemDoubleClicked.connect(self._jump_to_stream)
+        conv_layout.addWidget(self._stats_conversation_table)
+        tabs.addTab(conv_tab, self._t("Conversations"))
+
+        http_tab = QWidget()
+        http_layout = QVBoxLayout(http_tab)
+        http_layout.addWidget(QLabel(self._t("Status codes:")))
+        self._stats_status_table = _table(("Code", "Count"))
+        http_layout.addWidget(self._stats_status_table, 1)
+        http_layout.addWidget(QLabel(self._t("Top request URIs:")))
+        self._stats_uri_table = _table(("Count", "URI"))
+        http_layout.addWidget(self._stats_uri_table, 2)
+        tabs.addTab(http_tab, self._t("HTTP statistics"))
+
+        dns_tab = QWidget()
+        dns_layout = QVBoxLayout(dns_tab)
+        self._stats_dns_table = _table(("First frame", "Query name"))
+        dns_layout.addWidget(self._stats_dns_table)
+        tabs.addTab(dns_tab, self._t("DNS query names"))
+
+        layout.addWidget(tabs, 1)
+        return self._page_scaffold("Statistics", body)
+
+    def _jump_to_stream(self, item) -> None:
+        row = item.row()
+        items = getattr(self, "_stats_conversations", [])
+        if not 0 <= row < len(items):
+            return
+        conv = items[row]
+        proto = str(conv.get("protocol") or "tcp")
+        stream = conv.get("stream_index")
+        if stream is None:
+            return
+        self._filter_combo.setEditText(f"{proto}.stream eq {stream}")
+        self._nav.setCurrentRow(list(PAGE_NAMES).index("Frames"))
+        self._apply_display_filter()
+
+    def _refresh_statistics(self) -> None:
+        if not self._require_services("Statistics"):
+            self._fill_table(self._stats_protocol_table, [])
+            self._fill_table(self._stats_conversation_table, [])
+            self._fill_table(self._stats_status_table, [])
+            self._fill_table(self._stats_uri_table, [])
+            self._fill_table(self._stats_dns_table, [])
+            return
+        try:
+            payload = self.services.statistics()
+        except (OSError, ValueError) as error:
+            self._banners["Statistics"].setText(self._t("error: ") + str(error))
+            return
+        protocols = list(payload.get("protocols") or [])
+        base = max((int(item.get("frame_count") or 0) for item in protocols), default=1)
+        self._fill_table(
+            self._stats_protocol_table,
+            [
+                (
+                    item.get("protocol_label"),
+                    item.get("frame_count"),
+                    f"{int(item.get('frame_count') or 0) * 100.0 / base:.1f}%",
+                    item.get("first_frame"),
+                    item.get("last_frame"),
+                )
+                for item in protocols
+            ],
+        )
+        conversations = list(payload.get("conversations") or [])
+        self._stats_conversations = conversations
+        self._fill_table(
+            self._stats_conversation_table,
+            [
+                (
+                    item.get("protocol"),
+                    item.get("stream_index"),
+                    item.get("endpoint_a"),
+                    item.get("endpoint_b"),
+                    item.get("frame_count"),
+                    item.get("captured_bytes"),
+                    (
+                        (
+                            f"{float(item.get('last_time') or 0)}"
+                            f" - {float(item.get('first_time') or 0):.3f}s"
+                        )
+                        if item.get("first_time") is not None
+                        else ""
+                    ),
+                )
+                for item in conversations
+            ],
+        )
+        self._fill_table(
+            self._stats_status_table,
+            [
+                (item.get("code"), item.get("count"))
+                for item in payload.get("status_codes") or []
+            ],
+        )
+        self._fill_table(
+            self._stats_uri_table,
+            [
+                (item.get("count"), item.get("uri"))
+                for item in payload.get("top_uris") or []
+            ],
+        )
+        try:
+            names = self.services.dns_names()
+        except (OSError, ValueError) as error:
+            self._fill_table(self._stats_dns_table, [])
+            self._banners["Statistics"].setText(self._t("error: ") + str(error)[:120])
+            return
+        self._fill_table(
+            self._stats_dns_table,
+            [(item.get("first_frame"), item.get("name")) for item in names],
+        )
+        self._banners["Statistics"].setText(
+            self._t("Statistics ready.")
+            + f"  conversations: {len(conversations)}  dns: {len(names)}"
+        )
 
     def _build_http_page(self) -> QWidget:
         body = QWidget()
@@ -627,7 +784,7 @@ class MainWindow(QMainWindow):
             + f": {result.get('blobs_scanned')}/{result.get('blobs_total')}"
         )
         layout.addWidget(summary)
-        table = _table(("Variant", "Source", "Frames", "Offset", "Context"))
+        table = _table(("Variant", "Source", "Frame range", "Offset", "Context"))
         matches = list(result.get("matches") or [])
         self._fill_table(
             table,
@@ -693,6 +850,319 @@ class MainWindow(QMainWindow):
 
         QApplication.clipboard().setText(value)
         self.statusBar().showMessage(self._t("Copied: ") + value, 5000)
+
+    # ------------------------------------------------------------- frames page
+
+    _FILTER_CHEATSHEET = (
+        "http",
+        "dns",
+        "icmp",
+        "usb",
+        "tls",
+        'frame contains "flag"',
+        'tcp contains "flag"',
+        'http.request.uri contains "flag"',
+        "http.request.method == POST",
+        "http.response.code == 200",
+        "http.response.code >= 400",
+        "telnet",
+        "ftp || ftp-data",
+        "usb.capdata || usbhid.data",
+    )
+
+    _FILTER_HELP = (
+        (
+            "协议",
+            (
+                ("http", "所有 HTTP 流量"),
+                ("dns", "DNS 查询/应答"),
+                ("icmp", "Ping 及 ICMP 隐写"),
+                ("usb", "USB 键鼠流量"),
+                ("tls", "加密流量（判断加密盲区）"),
+                ("telnet || ftp", "远程登录与文件传输"),
+            ),
+        ),
+        (
+            "contains 搜索",
+            (
+                ('frame contains "flag"', "全帧字节搜 flag（Ctrl+F 分组字节流）"),
+                ('tcp contains "password"', "TCP 载荷搜关键字"),
+                ('http.request.uri contains "upload"', "URI 含 upload"),
+                ("http contains \"flag\"", "HTTP 报文含 flag（含响应正文）"),
+            ),
+        ),
+        (
+            "字段匹配",
+            (
+                ("http.request.method == POST", "只看 POST（上传/登录）"),
+                ("http.response.code == 200", "命中 200（爆破找成功）"),
+                ("http.response.code >= 400", "异常响应（爆破 404/403）"),
+                ("ip.addr == 192.168.1.1", "指定 IP 的全部流量"),
+            ),
+        ),
+        (
+            "流跟踪",
+            (
+                ("tcp.stream eq 0", "第 0 条 TCP 流"),
+                ("udp.stream eq 3", "第 3 条 UDP 流"),
+                ("tcp.len > 0", "有载荷的 TCP 包"),
+                ("dns.flags.response == 0", "只看 DNS 查询（外带分析）"),
+            ),
+        ),
+        (
+            "逻辑组合",
+            (
+                ("http && ip.dst == 10.0.0.5", "AND 组合"),
+                ("dns || icmp", "OR 组合"),
+                ("!tls", "排除 TLS 噪音"),
+                ('tcp && !(tcp contains "Chrome")', "括号取反"),
+            ),
+        ),
+    )
+
+    def _build_frames_page(self) -> QWidget:
+        body = QWidget()
+        layout = QVBoxLayout(body)
+
+        filter_row = QHBoxLayout()
+        filter_row.addWidget(QLabel("Display filter:"))
+        self._filter_combo = QComboBox()
+        self._filter_combo.setEditable(True)
+        self._filter_combo.lineEdit().returnPressed.connect(self._apply_display_filter)
+        self._filter_combo.lineEdit().setPlaceholderText(
+            'e.g.  http.request.uri contains "flag"   (click ? for syntax)'
+        )
+        self._filter_combo.addItems(self._settings.filter_history)
+        filter_row.addWidget(self._filter_combo, 2)
+        help_button = QPushButton("?")
+        help_button.setFixedWidth(32)
+        help_button.clicked.connect(self._show_filter_help)
+        filter_row.addWidget(help_button)
+        apply_button = QPushButton("Apply")
+        apply_button.clicked.connect(self._apply_display_filter)
+        filter_row.addWidget(apply_button)
+        clear_button = QPushButton("Clear")
+        clear_button.clicked.connect(self._clear_display_filter)
+        filter_row.addWidget(clear_button)
+        filter_row.addWidget(QLabel("Quick:"))
+        self._filter_cheatsheet = QComboBox()
+        self._filter_cheatsheet.addItems(self._FILTER_CHEATSHEET)
+        self._filter_cheatsheet.activated.connect(self._use_cheatsheet_filter)
+        filter_row.addWidget(self._filter_cheatsheet)
+        self._follow_tcp_button = QPushButton("Follow TCP stream")
+        self._follow_tcp_button.clicked.connect(lambda: self._follow_selected_stream("tcp"))
+        filter_row.addWidget(self._follow_tcp_button)
+        self._follow_udp_button = QPushButton("Follow UDP stream")
+        self._follow_udp_button.clicked.connect(lambda: self._follow_selected_stream("udp"))
+        filter_row.addWidget(self._follow_udp_button)
+        self._follow_http_button = QPushButton("Follow HTTP stream")
+        self._follow_http_button.clicked.connect(lambda: self._follow_selected_stream("http"))
+        filter_row.addWidget(self._follow_http_button)
+        layout.addLayout(filter_row)
+
+        self._frames_table = _table(
+            ("No.", "Time", "Source", "Destination", "Protocol", "Length", "Info")
+        )
+        self._frames_table.itemDoubleClicked.connect(self._show_frame_detail)
+        self._frames_table.itemSelectionChanged.connect(self._update_follow_buttons)
+        layout.addWidget(self._frames_table, 1)
+
+        nav = QHBoxLayout()
+        prev = QPushButton("Previous")
+        prev.clicked.connect(lambda: self._page_step("Frames", -1))
+        next_ = QPushButton("Next")
+        next_.clicked.connect(lambda: self._page_step("Frames", 1))
+        nav.addWidget(prev)
+        nav.addWidget(next_)
+        nav.addStretch(1)
+        layout.addLayout(nav)
+        return self._page_scaffold("Frames", body)
+
+    def _selected_frame(self):
+        row = self._frames_table.currentRow()
+        items = getattr(self, "_frames_items", [])
+        if 0 <= row < len(items):
+            return items[row]
+        return None
+
+    def _apply_display_filter(self) -> None:
+        text = self._filter_combo.currentText().strip()
+        self._offsets["Frames"] = 0
+        if text:
+            self._settings.remember_filter(text)
+            with suppress(OSError):
+                save_settings(self._settings)
+            self._filter_combo.clear()
+            self._filter_combo.addItems(self._settings.filter_history)
+            self._filter_combo.setEditText(text)
+        self._refresh_page("Frames")()
+
+    def _clear_display_filter(self) -> None:
+        self._filter_combo.setEditText("")
+        self._offsets["Frames"] = 0
+        self._refresh_page("Frames")()
+
+    def _show_filter_help(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle(self._t("Display filter syntax"))
+        dialog.resize(720, 520)
+        layout = QVBoxLayout(dialog)
+        hint = QLabel(self._t("Click a row to insert and run the filter."))
+        layout.addWidget(hint)
+        tabs = QTabWidget()
+        for category, entries in self._FILTER_HELP:
+            table = _table((self._t("Filter"), self._t("Meaning")))
+            self._fill_table(table, entries)
+            table.itemDoubleClicked.connect(
+                lambda item, table=table: self._insert_filter_from_help(table, item, dialog)
+            )
+            tabs.addTab(table, self._t(category))
+        layout.addWidget(tabs, 1)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(dialog.reject)
+        buttons.addButton(QDialogButtonBox.StandardButton.Close).clicked.connect(dialog.accept)
+        layout.addWidget(buttons)
+        dialog.exec()
+
+    def _insert_filter_from_help(self, table, item, dialog) -> None:
+        row = item.row()
+        if table.item(row, 0) is None:
+            return
+        text = table.item(row, 0).text()
+        self._filter_combo.setEditText(text)
+        dialog.accept()
+        self._apply_display_filter()
+
+    def _update_follow_buttons(self) -> None:
+        frame = self._selected_frame()
+        has_tcp = getattr(self, "_frames_has_tcp", True)
+        has_udp = getattr(self, "_frames_has_udp", True)
+        for button in (
+            self._follow_tcp_button,
+            self._follow_udp_button,
+            self._follow_http_button,
+        ):
+            button.setVisible(has_tcp or has_udp)
+        self._follow_tcp_button.setEnabled(
+            bool(frame and frame.get("tcp_stream") is not None)
+        )
+        self._follow_udp_button.setEnabled(
+            bool(frame and frame.get("udp_stream") is not None)
+        )
+        protocol = str((frame or {}).get("protocol") or "")
+        self._follow_http_button.setEnabled(
+            bool(frame and frame.get("tcp_stream") is not None and "HTTP" in protocol.upper())
+        )
+
+    def _use_cheatsheet_filter(self, index: int) -> None:
+        self._filter_combo.setEditText(self._FILTER_CHEATSHEET[index])
+        self._apply_display_filter()
+
+    def _follow_selected_stream(self, proto: str) -> None:
+        frame = self._selected_frame()
+        if frame is None or self.services is None:
+            QMessageBox.information(self, self._t("Auto-Shark"), self._t("Select a row first."))
+            return
+        if proto == "http" or proto == "tcp":
+            stream = frame.get("tcp_stream")
+        else:
+            stream = frame.get("udp_stream")
+        if stream is None:
+            QMessageBox.information(
+                self,
+                self._t("Auto-Shark"),
+                self._t("This frame has no {proto} stream index.").format(proto=proto),
+            )
+            return
+        # The follow expression only lands in the filter history — the
+        # current filter text is intentionally NOT replaced (the Wireshark
+        # pain point this page exists to fix).
+        wire = "tcp" if proto in ("tcp", "http") else "udp"
+        self._settings.remember_filter(f"{wire}.stream eq {stream}")
+        with suppress(OSError):
+            save_settings(self._settings)
+        try:
+            payload = self.services.follow_stream(proto, int(stream))
+        except (OSError, ValueError) as error:
+            QMessageBox.warning(self, self._t("Auto-Shark"), self._t("error: ") + str(error))
+            return
+        from .hexview import view_bytes
+
+        frames_note = ""
+        if payload.get("frames"):
+            frames_note = f"frames {payload['frames'][0]}-{payload['frames'][1]} · "
+        title = f"{proto}.stream eq {stream} — client"
+        note = (
+            f"{frames_note}{len(payload['client'])} B client / "
+            f"{len(payload['server'])} B server · close and follow server for the reply"
+        )
+        data = payload["client"] or payload["server"]
+        view_bytes(self, title, data, note)
+
+    def _show_frame_detail(self, item) -> None:
+        row = item.row()
+        items = getattr(self, "_frames_items", [])
+        if not 0 <= row < len(items) or self.services is None:
+            return
+        frame = items[row]
+        from .hexview import view_text
+
+        try:
+            detail = self.services.frame_detail(int(frame.get("frame")))
+        except (OSError, ValueError) as error:
+            QMessageBox.warning(self, self._t("Auto-Shark"), self._t("error: ") + str(error))
+            return
+        view_text(self, f"Frame {frame.get('frame')} — {frame.get('info', '')[:60]}", detail)
+
+    def _refresh_frames(self) -> None:
+        offset = self._offsets.get("Frames", 0)
+        filter_text = (
+            self._filter_combo.currentText().strip()
+            if hasattr(self, "_filter_combo")
+            else ""
+        )
+        if not self._require_services("Frames"):
+            self._fill_table(self._frames_table, [])
+            return
+        try:
+            payload = self.services.frames(offset=offset, filter_text=filter_text)
+        except (OSError, ValueError) as error:
+            self._banners["Frames"].setText(self._t("error: ") + str(error))
+            return
+        items = list(payload.get("items") or [])
+        self._frames_items = items
+        time_base = payload.get("time_base") or 0.0
+        self._frames_has_tcp = bool(payload.get("has_tcp"))
+        self._frames_has_udp = bool(payload.get("has_udp"))
+        self._fill_table(
+            self._frames_table,
+            [
+                (
+                    item.get("frame"),
+                    f"{(item.get('time') or 0.0) - time_base:.6f}",
+                    item.get("src"),
+                    item.get("dst"),
+                    item.get("protocol"),
+                    item.get("length"),
+                    item.get("info"),
+                )
+                for item in items
+            ],
+        )
+        self._update_follow_buttons()
+        suffix = f" [filter: {filter_text}]" if filter_text else ""
+        self._set_banner(
+            "Frames",
+            offset=offset,
+            count=len(items),
+            total=payload.get("total", 0),
+            extra=suffix,
+        )
+        if not items and payload.get("total", 0) == 0 and not filter_text:
+            self._banners["Frames"].setText(
+                self._t("No packet rows yet — they appear after the frames stage "
+                        "(run the full analysis).")
+            )
 
     def _build_files_page(self) -> QWidget:
         body = QWidget()
@@ -955,6 +1425,17 @@ class MainWindow(QMainWindow):
         the default machine-local root, and analysis starts automatically
         unless this project was already analyzed.
         """
+        if capture.suffix.lower() not in (".pcap", ".pcapng", ".cap"):
+            QMessageBox.information(
+                self,
+                self._t("Auto-Shark"),
+                self._t(
+                    "This is not a capture file. Nested challenges (mp3/png/zip hiding "
+                    "a pcap) need file carving first — extract the inner .pcap/.pcapng "
+                    "(binwalk/foremost or a hex editor) and open that."
+                ),
+            )
+            return
         project_dir = self._default_project_root(capture)
         created = not (project_dir / "project.json").is_file()
         try:
@@ -1785,6 +2266,8 @@ class MainWindow(QMainWindow):
     def _register_refreshers(self) -> None:
         self._register_refresher("Overview", self._refresh_overview)
         self._register_refresher("Files", self._refresh_files)
+        self._register_refresher("Frames", self._refresh_frames)
+        self._register_refresher("Statistics", self._refresh_statistics)
         self._register_refresher("HTTP", self._refresh_http)
         self._register_refresher("Streams", self._refresh_streams)
         self._register_refresher("Telnet", self._refresh_telnet)
@@ -1996,6 +2479,22 @@ class MainWindow(QMainWindow):
             "Findings", lambda: self.services.findings(candidate_offset=offset)
         )
         if payload is None:
+            self._candidate_items = []
+            self._finding_items = []
+            self._fill_table(self._candidates_table, [])
+            self._fill_table(self._findings_table, [])
+            self._refresh_timeline()
+            return
+        if not payload.get("candidates") and not payload.get("findings"):
+            # No detector fired on this challenge: point the player at the
+            # generic traffic view instead of an intimidating empty table.
+            self._banners["Findings"].setText(
+                self._t(
+                    "No automatic hits on this capture. Open the Frames page to browse "
+                    "every packet and filter manually (e.g. http, dns, usb, "
+                    'tcp contains "flag").'
+                )
+            )
             self._candidate_items = []
             self._finding_items = []
             self._fill_table(self._candidates_table, [])

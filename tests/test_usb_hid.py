@@ -20,7 +20,7 @@ def _line(frame: int, source: str, data: bytes) -> bytes:
         "usb.endpoint_address": "0x81",
         "usb.capdata": data.hex(),
     }
-    return "\t".join(f'"{values[field]}"' for field in USB_HID_FIELDS).encode()
+    return "\t".join(f'"{values.get(field, "")}"' for field in USB_HID_FIELDS).encode()
 
 
 def test_parse_usb_hid_line() -> None:
